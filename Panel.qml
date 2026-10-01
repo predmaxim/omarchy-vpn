@@ -61,14 +61,29 @@ Panel {
 
   function done() { root.busy = false; root.pending = null }
 
-  // TUN goes on and off by a config reload, not PATCH /configs: a runtime
-  // PATCH leaves Hysteria2's QUIC socket unbound to the uplink, and its
-  // packets loop into the tunnel.
+  // On: a config reload, not PATCH /configs — a runtime PATCH leaves
+  // Hysteria2's QUIC socket unbound to the uplink, and its packets loop into
+  // the tunnel. Off: PATCH — a reload leaves the "Meta" device behind, and the
+  // next start then fails with "device or resource busy".
   function setEnabled(on) {
     var next = Model.setEnabled(vpn.saved, on)
     if (next.enabled === vpn.saved.enabled || root.busy) return
     if (!vpn.apiUp) { root.notify(root.tr("VPN service is not running"), ""); return }
-    root.commit(next, true, null)
+    if (next.enabled) { root.commit(next, true, root.checkStarted); return }
+    vpn.call("PATCH", "/configs", { tun: { enable: false } }, function(ok) {
+      if (!ok) { root.notify(root.tr("VPN service is not running"), ""); return }
+      root.commit(next, false, function() { vpn.poll() })
+    })
+  }
+
+  // mihomo answers a reload with success even when TUN failed to start: look,
+  // and if it is not up, say so and save "off" again.
+  function checkStarted() {
+    vpn.call("GET", "/configs", null, function(ok, configs) {
+      if (ok && configs && configs.tun && configs.tun.enable) return
+      root.notify(root.tr("VPN did not start"), root.tr("See: journalctl -u mihomo@%1", Quickshell.env("USER")))
+      root.commit(Model.setEnabled(vpn.saved, false), false, function() { vpn.poll() })
+    })
   }
 
   function use(id) {

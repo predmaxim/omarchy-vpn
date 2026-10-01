@@ -26,7 +26,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now mihomo@$USER
 ## How it works
 
 - `~/.config/mihomo/state.json` — your subscriptions, the active one, on/off, rules and the API secret. The widget builds `config.yaml` (and `links/*.txt` for plain links) from it. Everything there is `0600` and holds subscription keys: keep it out of git.
-- The widget talks to mihomo's REST API on `127.0.0.1:9097`. On/off is a config reload, not a runtime TUN toggle: toggling TUN at runtime leaves Hysteria2's QUIC socket unbound to the uplink, and its packets loop into the tunnel.
+- The widget talks to mihomo's REST API on `127.0.0.1:9097`. VPN on is a config reload, not a runtime TUN toggle: that leaves Hysteria2's QUIC socket unbound to the uplink, and its packets loop into the tunnel. VPN off is the runtime toggle: a reload leaves the TUN device behind, and the next start fails with "device or resource busy". After turning on, the widget checks TUN really came up.
 - TUN uses the `gvisor` stack: with `system`/`mixed`, connections hung on a machine with `rp_filter=1`.
 - Retries: a dead current server re-tests its group, an empty subscription re-downloads — after 5 s, 15 s, 60 s, then every 5 minutes. The icon turns red when the service is down, a subscription has no servers or none answers.
 
