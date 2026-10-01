@@ -30,11 +30,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now mihomo@$USER
 - TUN uses the `gvisor` stack: with `system`/`mixed`, connections hung on a machine with `rp_filter=1`.
 - Retries: a dead current server re-tests its group, an empty subscription re-downloads — after 5 s, 15 s, 60 s, then every 5 minutes. The icon turns red when the service is down, a subscription has no servers or none answers.
 
-## Bar
-
-The widget shows its own icon (`showInBar`, default `true`). To keep only an icon elsewhere (an indicator group), set `"showInBar": false` on its entry in `shell.json`; `Indicator.qml` is such an icon for a bar indicator group (`@PLUGIN_DIR@` is this directory).
-
-IPC:
+## IPC
 
 ```bash
 omarchy-shell predmaxim.vpn toggle            # the settings modal (open / close too)

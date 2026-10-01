@@ -9,7 +9,7 @@ import "I18n.js" as I18n
 
 // VPN through mihomo (TUN). This widget owns every change: it writes
 // ~/.config/mihomo (state.json, config.yaml, link files) and drives mihomo's
-// API. The bar indicator (Indicator.qml) and the menu only read and send IPC.
+// API. The menu only reads and sends IPC.
 Panel {
   id: root
   moduleName: "predmaxim.vpn"
@@ -19,8 +19,6 @@ Panel {
   readonly property color fg: root.bar ? root.bar.barForeground : Color.foreground
   readonly property color muted: Qt.darker(root.fg, 1.4)
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-  // Others get the icon on their bar; mine is among the indicators (showInBar: false).
-  readonly property bool showInBar: setting("showInBar", true)
 
   property string tab: "subs"
   property string confirmId: ""
@@ -212,13 +210,11 @@ Panel {
 
   onOpenedChanged: if (opened) vpn.poll(); else root.confirmId = ""
 
-  visible: root.showInBar
-  implicitWidth: root.showInBar ? icon.implicitWidth : 0
-  implicitHeight: root.showInBar ? icon.implicitHeight : 0
+  implicitWidth: icon.implicitWidth
+  implicitHeight: icon.implicitHeight
 
   BarIconButton {
     id: icon
-    visible: root.showInBar
     bar: root.bar
     text: Model.glyph(vpn.view)
     tooltipText: Model.tooltip(vpn.view, root.tr)

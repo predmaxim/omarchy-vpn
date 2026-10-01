@@ -5,7 +5,7 @@ import "Model.js" as Model
 import "Api.js" as Api
 
 // What the icon, the menu and the modal show: `saved` (state.json) plus a poll of
-// mihomo's API every 5 s. The widget and the bar indicator each have one.
+// mihomo's API every 5 s, for the widget and its menu.
 Item {
   id: root
 
