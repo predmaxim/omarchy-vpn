@@ -3,7 +3,6 @@
 // links, status from mihomo's API. No QML in here, so node runs it (test.js).
 
 var TEST_URL = "https://www.gstatic.com/generate_204"
-var ERROR_COLOR = "#e5534b"
 // A globe: on — md-web, off — md-web_off, error — md-web_cancel (also red).
 var GLYPHS = { on: "\u{F059F}", off: "\u{F0A8E}", error: "\u{F1790}" }
 // Sites of a country go direct: its TLDs, mihomo's geosite list, its GeoIP code.

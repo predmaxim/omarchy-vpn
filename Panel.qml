@@ -262,7 +262,7 @@ Panel {
     bar: root.bar
     text: Model.glyph(vpn.view)
     tooltipText: Model.tooltip(vpn.view, root.tr)
-    foreground: Model.isError(vpn.view) ? Model.ERROR_COLOR : (vpn.view.kind === "on" ? root.fg : root.muted)
+    foreground: Model.isError(vpn.view) ? Color.urgent : (vpn.view.kind === "on" ? root.fg : root.muted)
     onPressed: function(button) {
       if (button === Qt.RightButton) menu.open = !menu.open
       else if (button === Qt.MiddleButton) root.setEnabled(!vpn.saved.enabled)
@@ -317,7 +317,7 @@ Panel {
           fontFamily: root.fontFamily
           iconComponent: Text {
             text: Model.glyph(vpn.view)
-            color: Model.isError(vpn.view) ? Model.ERROR_COLOR : root.fg
+            color: Model.isError(vpn.view) ? Color.urgent : root.fg
             font.family: root.fontFamily
             font.pixelSize: Style.font.display
           }
