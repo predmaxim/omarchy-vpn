@@ -33,7 +33,7 @@ Panel {
   readonly property string notifyIcon: String(Qt.resolvedUrl("globe.svg")).replace(/^file:\/\//, "")
 
   function notify(summary, body) {
-    Quickshell.execDetached(["notify-send", "-a", "VPN", "-i", root.notifyIcon, summary, body || ""])
+    Quickshell.execDetached(["omarchy-notification-send", "--app-name", "VPN", "-u", "normal", "-i", root.notifyIcon, summary, body || ""])
   }
 
   // Applies change(saved) -> next: writes its files; with `reload`, mihomo
