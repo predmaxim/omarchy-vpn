@@ -5,6 +5,12 @@
 // qsTr isn't used.
 var TABLES = {
   ru: {
+    "VPN service is not running": "Сервис VPN не запущен",
+    "VPN: no subscriptions": "VPN: нет подписок",
+    "VPN is off": "VPN выключен",
+    "VPN: no servers in %1": "VPN: в %1 нет серверов",
+    "VPN: no connection to %1": "VPN: нет связи с серверами %1",
+    "VPN: %1 · %2 · %3 ms": "VPN: %1 · %2 · %3 мс"
   }
 }
 
