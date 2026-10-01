@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls as QQC
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -29,7 +30,7 @@ Panel {
   property int retryAttempt: 0
 
   // The plugin's own icon: the notification center shows -i, and "VPN" has no .desktop to look one up in.
-  readonly property string notifyIcon: String(Qt.resolvedUrl("icon.svg")).replace(/^file:\/\//, "")
+  readonly property string notifyIcon: String(Qt.resolvedUrl("globe.svg")).replace(/^file:\/\//, "")
 
   function notify(summary, body) {
     Quickshell.execDetached(["notify-send", "-a", "VPN", "-i", root.notifyIcon, summary, body || ""])
@@ -577,12 +578,19 @@ Panel {
                   onAccepted: if (root.addDomain(domains.modelData.list, text)) text = ""
                 }
 
-                Repeater {
+                // A list of its own scroll height, so new domains don't stretch the modal.
+                ListView {
+                  id: domainList
+                  width: domains.width
+                  height: Math.min(contentHeight, Style.space(140))
+                  clip: true
+                  boundsBehavior: Flickable.StopAtBounds
                   model: vpn.saved[domains.modelData.list]
+                  QQC.ScrollBar.vertical: QQC.ScrollBar { policy: domainList.contentHeight > domainList.height ? QQC.ScrollBar.AlwaysOn : QQC.ScrollBar.AlwaysOff }
                   delegate: Item {
                     id: domainRow
                     required property string modelData
-                    width: domains.width
+                    width: domainList.width
                     height: Math.max(Style.space(32), domainText.implicitHeight + Style.spacing.xs * 2)
                     Text {
                       id: domainText
@@ -595,6 +603,7 @@ Panel {
                     }
                     Button {
                       anchors.right: parent.right
+                      anchors.rightMargin: Style.space(12)
                       anchors.verticalCenter: parent.verticalCenter
                       iconText: "\u{F0156}"
                       iconSize: Style.font.body
