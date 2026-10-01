@@ -27,7 +27,8 @@ var TABLES = {
     "Not a domain: %1": "Не домен: %1", "Domain…": "Домен…", "Direct: country": "Напрямую: страна",
     "Russia": "Россия", "Don't use": "Не использовать", "Block ads": "Блокировать рекламу",
     "ALWAYS THROUGH VPN": "ВСЕГДА ЧЕРЕЗ VPN", "ALWAYS DIRECT": "ВСЕГДА НАПРЯМУЮ",
-    "ADD SUBSCRIPTION": "ДОБАВИТЬ ПОДПИСКУ"
+    "ADD SUBSCRIPTION": "ДОБАВИТЬ ПОДПИСКУ",
+    "VPN did not start": "VPN не запустился", "See: journalctl -u mihomo@%1": "Смотрите: journalctl -u mihomo@%1"
   }
 }
 
