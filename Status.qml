@@ -13,6 +13,8 @@ Item {
   property var saved: Model.defaults("")
   property bool loaded: false
   property bool missing: false
+  // state.json exists but does not parse: shown, never written over (Panel.commit).
+  property bool broken: false
   property var st: Model.status(null, null)
   property int failures: 0
   // Our own config reload makes the API vanish for a moment: failed polls
@@ -22,6 +24,9 @@ Item {
   readonly property var view: Model.view(saved, st, apiUp)
 
   signal polled()
+  signal loadedFile()
+
+  function reread() { file.reload() }
 
   function call(method, path, body, done) {
     Api.request(root.saved.port, root.saved.secret, method, path, body, done || function() {})
@@ -46,11 +51,20 @@ Item {
   }
 
   FileView {
+    id: file
     path: root.dir + "/state.json"
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: { root.saved = Model.load(text()); root.missing = false; root.loaded = true; root.poll() }
+    onLoaded: {
+      var parsed = Model.parseState(text())
+      root.saved = parsed.state
+      root.broken = parsed.broken
+      root.missing = false
+      root.loaded = true
+      root.loadedFile()
+      root.poll()
+    }
     onLoadFailed: { root.missing = true; root.loaded = true }
   }
 

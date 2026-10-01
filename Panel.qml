@@ -24,6 +24,8 @@ Panel {
   property string confirmId: ""
   property bool busy: false
   property var pending: null
+  // Changes that arrived while another one was being written: they wait their turn.
+  property var queue: []
   property int retryAttempt: 0
 
   // The plugin's own icon: the notification center shows -i, and "VPN" has no .desktop to look one up in.
@@ -33,33 +35,64 @@ Panel {
     Quickshell.execDetached(["notify-send", "-a", "VPN", "-i", root.notifyIcon, summary, body || ""])
   }
 
-  // Writes the files of `next`; with `reload`, mihomo then re-reads its
-  // config, and a rejected config rolls back to the state before. `after`
-  // runs once everything went through.
-  function commit(next, reload, after, rollback) {
-    if (root.busy) return
+  // Applies change(saved) -> next: writes its files; with `reload`, mihomo
+  // then re-reads its config, and a rejected config rolls back. `after` runs
+  // once everything went through. A change arriving while another is written
+  // waits its turn and is computed from the state at its turn, so it never
+  // undoes the one before. A broken state.json is never written over: it holds
+  // the only copy of the subscription keys. options: { rollback, firstRun }.
+  function commit(change, reload, after, options) {
+    options = options || {}
+    if (vpn.broken) {
+      root.notify(root.tr("VPN settings file is damaged"), root.tr("Fix or delete %1", vpn.dir + "/state.json"))
+      return
+    }
+    if (root.busy) { root.queue = root.queue.concat([[change, reload, after, options]]); return }
+    var prev = vpn.saved
+    var next = change(prev)
     root.busy = true
-    root.pending = { next: next, prev: vpn.saved, reload: reload, after: after || null, rollback: !!rollback }
-    writer.environment = Model.writerEnv(next)
+    root.pending = { next: next, prev: prev, reload: reload, after: after || null, options: options }
+    var env = Model.writerEnv(next)
+    if (options.firstRun) env.FIRST_RUN = "1"
+    writer.environment = env
     writer.running = true
   }
 
   function written(code) {
     var p = root.pending
     if (code !== 0) { root.done(); root.notify(root.tr("Could not save VPN settings"), ""); return }
-    vpn.saved = p.next
+    // A first run may have found another widget's state.json: read the file back.
+    if (p.options.firstRun) vpn.reread(); else vpn.saved = p.next
     if (!p.reload || !vpn.apiUp) { root.done(); if (p.after) p.after(); return }
     vpn.quiet = true
     vpn.call("PUT", "/configs?force=true", { path: vpn.dir + "/config.yaml" }, function(ok, data) {
       vpn.quiet = false
-      root.done()
-      if (ok) { if (p.after) p.after(); vpn.poll(); return }
+      if (ok) { root.done(); if (p.after) p.after(); vpn.poll(); return }
       root.notify(root.tr("mihomo rejected the configuration"), data && data.message ? data.message : "")
-      if (!p.rollback) root.commit(p.prev, true, null, true)
+      root.busy = false
+      root.pending = null
+      // The rollback goes before anything queued.
+      if (!p.options.rollback) root.commit(function() { return p.prev }, true, null, { rollback: true })
+      else root.done()
     })
   }
 
-  function done() { root.busy = false; root.pending = null }
+  function done() {
+    root.busy = false
+    root.pending = null
+    if (!root.queue.length) return
+    var next = root.queue[0]
+    root.queue = root.queue.slice(1)
+    Qt.callLater(function() { root.commit(next[0], next[1], next[2], next[3]) })
+  }
+
+  // fn after ms, one timer per call (several checks may be waiting at once).
+  function later(ms, fn) {
+    var timer = Qt.createQmlObject("import QtQuick; Timer {}", root)
+    timer.interval = ms
+    timer.triggered.connect(function() { timer.destroy(); fn() })
+    timer.start()
+  }
 
   // On: a config reload, not PATCH /configs — a runtime PATCH leaves
   // Hysteria2's QUIC socket unbound to the uplink, and its packets loop into
@@ -69,10 +102,10 @@ Panel {
     var next = Model.setEnabled(vpn.saved, on)
     if (next.enabled === vpn.saved.enabled || root.busy) return
     if (!vpn.apiUp) { root.notify(root.tr("VPN service is not running"), ""); return }
-    if (next.enabled) { root.commit(next, true, root.checkStarted); return }
+    if (next.enabled) { root.commit(function(s) { return Model.setEnabled(s, true) }, true, root.checkStarted); return }
     vpn.call("PATCH", "/configs", { tun: { enable: false } }, function(ok) {
       if (!ok) { root.notify(root.tr("VPN service is not running"), ""); return }
-      root.commit(next, false, function() { vpn.poll() })
+      root.commit(function(s) { return Model.setEnabled(s, false) }, false, function() { vpn.poll() })
     })
   }
 
@@ -82,7 +115,7 @@ Panel {
     vpn.call("GET", "/configs", null, function(ok, configs) {
       if (ok && configs && configs.tun && configs.tun.enable) return
       root.notify(root.tr("VPN did not start"), root.tr("See: journalctl -u mihomo@%1", Quickshell.env("USER")))
-      root.commit(Model.setEnabled(vpn.saved, false), false, function() { vpn.poll() })
+      root.commit(function(s) { return Model.setEnabled(s, false) }, false, function() { vpn.poll() })
     })
   }
 
@@ -90,13 +123,13 @@ Panel {
     var next = Model.useSubscription(vpn.saved, id)
     if (next === vpn.saved || root.busy) return
     vpn.call("PUT", "/proxies/VPN", { name: id }, function(ok) {
-      if (ok) root.commit(next, false, function() { vpn.poll() })
+      if (ok) root.commit(function(s) { return Model.useSubscription(s, id) }, false, function() { vpn.poll() })
     })
   }
 
   function remove(id) {
     root.confirmId = ""
-    root.commit(Model.removeSubscription(vpn.saved, id), true, null)
+    root.commit(function(s) { return Model.removeSubscription(s, id) }, true, null)
   }
 
   // Pasted or scanned text -> a new subscription. A URL is downloaded once for
@@ -110,9 +143,8 @@ Panel {
   }
 
   function addSubscription(sub) {
-    var r = Model.addSubscription(vpn.saved, sub)
-    if (r.error) { root.notify(root.tr("Already added"), sub.name); return }
-    root.commit(r.state, true, function() { root.verifyAdded(sub, 0) })
+    if (Model.addSubscription(vpn.saved, sub).error) { root.notify(root.tr("Already added"), sub.name); return }
+    root.commit(function(s) { return Model.addSubscription(s, sub).state }, true, function() { root.verifyAdded(sub, 0) })
   }
 
   // mihomo loads a provider in the background: look for its servers three
@@ -121,9 +153,9 @@ Panel {
     vpn.call("GET", "/providers/proxies/" + sub.id, null, function(ok, data) {
       var count = ok && data && data.proxies ? data.proxies.length : 0
       if (count > 0) { root.notify(root.tr("Added: %1", sub.name), root.tr("Servers: %1", count)); return }
-      if (attempt < 2) { verifyTimer.sub = sub; verifyTimer.attempt = attempt + 1; verifyTimer.start(); return }
+      if (attempt < 2) { root.later(2000, function() { root.verifyAdded(sub, attempt + 1) }); return }
       root.notify(root.tr("No usable servers in %1", sub.name), "")
-      root.commit(Model.removeSubscription(vpn.saved, sub.id), true, null)
+      root.commit(function(s) { return Model.removeSubscription(s, sub.id) }, true, null)
     })
   }
 
@@ -136,7 +168,7 @@ Panel {
   function addDomain(list, text) {
     var r = Model.addDomain(vpn.saved, list, text)
     if (r.error === "invalid") { root.notify(root.tr("Not a domain: %1", text.trim()), ""); return false }
-    if (!r.error) root.commit(r.state, true, null)
+    if (!r.error) root.commit(function(s) { return Model.addDomain(s, list, text).state }, true, null)
     return true
   }
 
@@ -160,7 +192,10 @@ Panel {
     id: vpn
     onPolled: root.checkRetry()
     // First run: a state with a new API secret.
-    onMissingChanged: if (missing && !root.busy) root.commit(Model.defaults(Model.randomSecret(Math.random)), false, null)
+    // First run: a state with a new API secret (FIRST_RUN: unless another widget made one).
+    onMissingChanged: if (missing) root.commit(function() { return Model.defaults(Model.randomSecret(Math.random)) }, false, null, { firstRun: true })
+    // An empty secret would leave mihomo's API open to any local process: make one.
+    onLoadedFile: if (!vpn.broken && !vpn.saved.secret) root.commit(function(s) { return Model.patch(s, { secret: Model.randomSecret(Math.random) }) }, true, null)
   }
 
   Process {
@@ -170,14 +205,6 @@ Panel {
   }
 
   Timer { id: retryTimer; onTriggered: root.retryNow() }
-
-  Timer {
-    id: verifyTimer
-    property var sub: null
-    property int attempt: 0
-    interval: 2000
-    onTriggered: root.verifyAdded(sub, attempt)
-  }
 
   Timer { id: qrDelay; interval: 250; onTriggered: qr.running = true }
 
@@ -491,7 +518,7 @@ Panel {
                 fontFamily: root.fontFamily
                 onChanged: function(value) {
                   var next = value === "none" ? "" : value
-                  if (next !== vpn.saved.country) root.commit(Model.patch(vpn.saved, { country: next }), true, null)
+                  if (next !== vpn.saved.country) root.commit(function(s) { return Model.patch(s, { country: next }) }, true, null)
                 }
               }
             }
@@ -512,7 +539,7 @@ Panel {
                 anchors.right: parent.right
                 checked: vpn.saved.blockAds
                 foreground: root.fg
-                onToggled: root.commit(Model.patch(vpn.saved, { blockAds: !vpn.saved.blockAds }), true, null)
+                onToggled: root.commit(function(s) { return Model.patch(s, { blockAds: !s.blockAds }) }, true, null)
               }
             }
 
@@ -574,7 +601,7 @@ Panel {
                       tooltipText: root.tr("Delete")
                       foreground: root.fg
                       fontFamily: root.fontFamily
-                      onClicked: root.commit(Model.removeDomain(vpn.saved, domains.modelData.list, domainRow.modelData), true, null)
+                      onClicked: root.commit(function(s) { return Model.removeDomain(s, domains.modelData.list, domainRow.modelData) }, true, null)
                     }
                   }
                 }

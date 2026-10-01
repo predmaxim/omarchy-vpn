@@ -28,7 +28,8 @@ var TABLES = {
     "Russia": "Россия", "Don't use": "Не использовать", "Block ads": "Блокировать рекламу",
     "ALWAYS THROUGH VPN": "ВСЕГДА ЧЕРЕЗ VPN", "ALWAYS DIRECT": "ВСЕГДА НАПРЯМУЮ",
     "ADD SUBSCRIPTION": "ДОБАВИТЬ ПОДПИСКУ",
-    "VPN did not start": "VPN не запустился", "See: journalctl -u mihomo@%1": "Смотрите: journalctl -u mihomo@%1"
+    "VPN did not start": "VPN не запустился", "VPN settings file is damaged": "Файл настроек VPN повреждён",
+    "Fix or delete %1": "Исправьте или удалите %1", "See: journalctl -u mihomo@%1": "Смотрите: journalctl -u mihomo@%1"
   }
 }
 
