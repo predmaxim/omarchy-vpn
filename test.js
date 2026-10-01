@@ -230,4 +230,8 @@ waiting.kill()
 assert.ok(!fs.existsSync(fresh + "/.lock"))
 fs.rmSync(path.dirname(fresh), { recursive: true })
 
+// slurp reads ready-made boxes from stdin when it is not a terminal: a QML Process gives it an
+// open pipe, so it must get /dev/null or it waits forever and never shows the selection
+assert.ok(/slurp <\s*\/dev\/null/.test(fs.readFileSync(__dirname + "/Panel.qml", "utf8")), "Panel.qml: slurp without </dev/null")
+
 console.log("ok")

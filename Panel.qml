@@ -232,10 +232,11 @@ Panel {
     onExited: function(code) { root.addText(code === 0 ? pasted.text : "") }
   }
 
-  // Exit 2 — the selection was cancelled: nothing to say.
+  // Exit 2 — the selection was cancelled: nothing to say. slurp gets /dev/null:
+  // with a pipe on stdin it waits there for ready-made boxes and never shows.
   Process {
     id: qr
-    command: ["sh", "-c", 'g=$(slurp) || exit 2; grim -g "$g" - | zbarimg -q --raw -']
+    command: ["sh", "-c", 'g=$(slurp </dev/null) || exit 2; grim -g "$g" - | zbarimg -q --raw -']
     stdout: StdioCollector { id: scanned }
     onExited: function(code) {
       root.open()
