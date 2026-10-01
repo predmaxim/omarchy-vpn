@@ -151,14 +151,20 @@ assert.strictEqual(fs.statSync(dir + "/state.json").mode & 0o777, 0o600)
 fs.rmSync(dir, { recursive: true })
 
 // status from GET /configs and GET /proxies
+// Servers of a provider are not in /proxies: their test history comes from /providers/proxies.
 const proxies = { proxies: {
   VPN: { type: "Selector", now: "s2", all: ["s2", "s1"] },
-  s2: { type: "URLTest", now: "LTE_3", all: ["LTE_1", "LTE_3"] },
-  s1: { type: "URLTest", now: "Main", all: ["Main"] },
-  LTE_3: { type: "Vless", history: [{ delay: 80 }, { delay: 45 }] } } }
-const stt = M.status({ tun: { enable: true } }, proxies)
+  s2: { type: "URLTest", now: "LTE_3", all: ["LTE_1", "LTE_3"], history: [] },
+  s1: { type: "URLTest", now: "Main", all: ["Main"], history: [] } } }
+const providers = { providers: {
+  s2: { proxies: [{ name: "LTE_1", history: [{ delay: 300 }] }, { name: "LTE_3", history: [{ delay: 80 }, { delay: 45 }] }] },
+  s1: { proxies: [{ name: "Main", history: [] }] },
+  default: { proxies: [] } } }
+const stt = M.status({ tun: { enable: true } }, proxies, providers)
 assert.deepStrictEqual(stt, { tun: true, group: "s2", server: "LTE_3", delay: 45, counts: { s2: 2, s1: 1 } })
-assert.deepStrictEqual(M.status(null, null), { tun: false, group: "", server: "", delay: -1, counts: {} })
+assert.deepStrictEqual(M.status(null, null, null), { tun: false, group: "", server: "", delay: -1, counts: {} })
+// a server not tested yet: -1, not 0 (0 means the test failed)
+assert.strictEqual(M.status({}, proxies, { providers: {} }).delay, -1)
 // view
 assert.deepStrictEqual(M.view(cs, stt, true), { kind: "on", name: "example", server: "LTE_3", delay: 45 })
 assert.strictEqual(M.view(cs, stt, false).kind, "down")
@@ -170,7 +176,10 @@ assert.ok(M.isError({ kind: "dead" }) && M.isError({ kind: "down" }) && M.isErro
 assert.strictEqual(M.glyph({ kind: "on" }), "\u{F0565}")
 assert.strictEqual(M.glyph({ kind: "off" }), "\u{F099E}")
 assert.strictEqual(M.glyph({ kind: "dead" }), "\u{F0ECC}")
-assert.strictEqual(M.tooltip({ kind: "on", name: "A", server: "B", delay: -1 }, (t, ...a) => a.reduce((s, x, i) => s.split("%" + (i + 1)).join(x), t)), "VPN: A · B · … ms")
+const trEn = (t, ...a) => a.reduce((s, x, i) => s.split("%" + (i + 1)).join(x), t)
+assert.strictEqual(M.tooltip({ kind: "on", name: "A", server: "B", delay: -1 }, trEn), "VPN: A · B · … ms")
+// a one-link subscription is named like its server: say it once
+assert.strictEqual(M.tooltip({ kind: "on", name: "A", server: "A", delay: 45 }, trEn), "VPN: A · 45 ms")
 // retries
 assert.deepStrictEqual([0, 1, 2, 3, 9].map(M.retryDelay), [5000, 15000, 60000, 300000, 300000])
 

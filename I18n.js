@@ -10,7 +10,7 @@ var TABLES = {
     "VPN is off": "VPN выключен",
     "VPN: no servers in %1": "VPN: в %1 нет серверов",
     "VPN: no connection to %1": "VPN: нет связи с серверами %1",
-    "VPN: %1 · %2 · %3 ms": "VPN: %1 · %2 · %3 мс",
+    "VPN: %1 · %2 · %3 ms": "VPN: %1 · %2 · %3 мс", "VPN: %1 · %2 ms": "VPN: %1 · %2 мс",
     "Turn VPN off": "Выключить VPN", "Turn VPN on": "Включить VPN", "Settings…": "Настройки…",
     "Could not save VPN settings": "Не удалось сохранить настройки VPN",
     "mihomo rejected the configuration": "mihomo отверг конфигурацию",
