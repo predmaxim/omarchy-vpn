@@ -173,9 +173,8 @@ assert.strictEqual(M.view(cs, Object.assign({}, stt, { tun: false }), true).kind
 assert.strictEqual(M.view(cs, Object.assign({}, stt, { counts: { s2: 0 } }), true).kind, "nosrv")
 assert.strictEqual(M.view(cs, Object.assign({}, stt, { delay: 0 }), true).kind, "dead")
 assert.ok(M.isError({ kind: "dead" }) && M.isError({ kind: "down" }) && M.isError({ kind: "nosrv" }) && !M.isError({ kind: "off" }))
-assert.strictEqual(M.glyph({ kind: "on" }), "\u{F0565}")
-assert.strictEqual(M.glyph({ kind: "off" }), "\u{F099E}")
-assert.strictEqual(M.glyph({ kind: "dead" }), "\u{F0ECC}")
+// one VPN glyph (md-vpn) for every state: on, off and error differ by colour only
+for (const kind of ["on", "off", "empty", "dead", "down", "nosrv"]) assert.strictEqual(M.glyph({ kind }), "\u{F0582}")
 const trEn = (t, ...a) => a.reduce((s, x, i) => s.split("%" + (i + 1)).join(x), t)
 assert.strictEqual(M.tooltip({ kind: "on", name: "A", server: "B", delay: -1 }, trEn), "VPN: A · B · … ms")
 // a one-link subscription is named like its server: say it once

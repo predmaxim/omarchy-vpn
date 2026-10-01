@@ -4,7 +4,8 @@
 
 var TEST_URL = "https://www.gstatic.com/generate_204"
 var ERROR_COLOR = "#e5534b"
-var GLYPHS = { on: "\u{F0565}", off: "\u{F099E}", error: "\u{F0ECC}" }
+// md-vpn for every state: on, off and error differ by colour (normal, muted, red).
+var GLYPH = "\u{F0582}"
 // Sites of a country go direct: its TLDs, mihomo's geosite list, its GeoIP code.
 var COUNTRIES = { ru: { suffixes: ["ru", "su", "xn--p1ai"], geosite: "category-ru", geoip: "RU" } }
 // Never through the tunnel: LAN, corporate VPNs, Tailscale, loopback.
@@ -286,7 +287,7 @@ function view(state, st, apiUp) {
 
 function isError(v) { return v.kind === "down" || v.kind === "nosrv" || v.kind === "dead" }
 
-function glyph(v) { return isError(v) ? GLYPHS.error : (v.kind === "on" ? GLYPHS.on : GLYPHS.off) }
+function glyph(v) { return GLYPH }
 
 function tooltip(v, tr) {
   if (v.kind === "down") return tr("VPN service is not running")
