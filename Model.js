@@ -105,3 +105,56 @@ function linksSubscription(links) {
   }
   return { id: idFor(links), name: name || host(first), kind: "links", links: links }
 }
+
+function addSubscription(state, sub) {
+  for (var i = 0; i < state.subscriptions.length; i++)
+    if (state.subscriptions[i].id === sub.id) return { state: state, error: "exists" }
+  var next = clone(state)
+  next.subscriptions.push(sub)
+  if (!next.active) next.active = sub.id
+  return { state: next, error: "" }
+}
+
+// The active one gone: the first left takes over; none left: VPN goes off.
+function removeSubscription(state, id) {
+  var next = clone(state)
+  next.subscriptions = next.subscriptions.filter(function(s) { return s.id !== id })
+  if (next.active === id) next.active = next.subscriptions.length ? next.subscriptions[0].id : ""
+  if (!next.subscriptions.length) next.enabled = false
+  return next
+}
+
+function useSubscription(state, id) {
+  var known = state.subscriptions.some(function(s) { return s.id === id })
+  return known ? patch(state, { active: id }) : state
+}
+
+function setEnabled(state, on) {
+  return patch(state, { enabled: !!on && state.subscriptions.length > 0 })
+}
+
+// "https://Sub.Example.COM:443/x", "*.example.com" -> "example.com"; "" if not
+// a domain. ASCII only: hostnames reach mihomo in punycode.
+function normalizeDomain(text) {
+  var d = String(text || "").trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
+  d = d.split(/[\/?#]/)[0].replace(/:\d+$/, "").replace(/^\*?\./, "")
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d) ? d : ""
+}
+
+// list: "proxyDomains" or "directDomains". A domain lives in one list only.
+function addDomain(state, list, text) {
+  var domain = normalizeDomain(text)
+  if (!domain) return { state: state, error: "invalid" }
+  if (state[list].indexOf(domain) >= 0) return { state: state, error: "exists" }
+  var other = list === "proxyDomains" ? "directDomains" : "proxyDomains"
+  var next = clone(state)
+  next[list].push(domain)
+  next[other] = next[other].filter(function(x) { return x !== domain })
+  return { state: next, error: "" }
+}
+
+function removeDomain(state, list, domain) {
+  var next = clone(state)
+  next[list] = next[list].filter(function(x) { return x !== domain })
+  return next
+}

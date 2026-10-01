@@ -3,7 +3,8 @@ const fs = require("fs")
 const assert = require("assert")
 const src = fs.readFileSync(__dirname + "/Model.js", "utf8").replace(".pragma library", "")
 const M = new Function(src + `; return { defaults, load, randomSecret, clone, patch, idFor, classify, host,
-  decodeTitle, splitResponse, urlSubscription, linksSubscription }`)()
+  decodeTitle, splitResponse, urlSubscription, linksSubscription, addSubscription, removeSubscription, useSubscription,
+  setEnabled, normalizeDomain, addDomain, removeDomain }`)()
 
 // state.json: broken or partial files fall back to defaults field by field
 assert.deepStrictEqual(M.load("{broken"), M.defaults(""))
@@ -55,5 +56,45 @@ assert.strictEqual(M.urlSubscription("https://h.com/s", "").interval, 3600)
 assert.strictEqual(M.linksSubscription("hy2://p@1.2.3.4:443?sni=a#Main%20Hy2\nvless://x@y:1#B").name, "Main Hy2")
 assert.strictEqual(M.linksSubscription("vless://x@srv.io:443").name, "srv.io")
 assert.strictEqual(M.linksSubscription("vless://x@srv.io:443").kind, "links")
+
+// subscriptions: the first added becomes active; the same source twice is refused
+const a = { id: "sa", name: "A", kind: "links", links: "hy2://x@a:1#A" }
+const b = { id: "sb", name: "B", kind: "url", url: "https://b", interval: 3600 }
+let st = M.addSubscription(M.defaults("k"), a).state
+assert.strictEqual(st.active, "sa")
+st = M.addSubscription(st, b).state
+assert.strictEqual(st.active, "sa")
+assert.strictEqual(st.subscriptions.length, 2)
+assert.strictEqual(M.addSubscription(st, a).error, "exists")
+assert.strictEqual(M.useSubscription(st, "sb").active, "sb")
+assert.strictEqual(M.useSubscription(st, "nope").active, "sa")
+// removing the active one activates the first left; removing the last one turns VPN off
+st = M.setEnabled(st, true)
+assert.strictEqual(st.enabled, true)
+st = M.removeSubscription(st, "sa")
+assert.strictEqual(st.active, "sb")
+assert.strictEqual(st.enabled, true)
+st = M.removeSubscription(st, "sb")
+assert.strictEqual(st.active, "")
+assert.strictEqual(st.enabled, false)
+// no subscriptions — VPN cannot be on
+assert.strictEqual(M.setEnabled(M.defaults("k"), true).enabled, false)
+
+// domains: normalised, ASCII only, one list at a time
+assert.strictEqual(M.normalizeDomain("https://Example.COM/path?q=1"), "example.com")
+assert.strictEqual(M.normalizeDomain("*.example.com"), "example.com")
+assert.strictEqual(M.normalizeDomain(".example.com"), "example.com")
+assert.strictEqual(M.normalizeDomain("example.com:443"), "example.com")
+assert.strictEqual(M.normalizeDomain("localhost"), "")
+assert.strictEqual(M.normalizeDomain("кто.рф"), "")
+assert.strictEqual(M.normalizeDomain("a b.com"), "")
+let d = M.addDomain(M.defaults("k"), "proxyDomains", "Kinopoisk.ru")
+assert.deepStrictEqual(d.state.proxyDomains, ["kinopoisk.ru"])
+assert.strictEqual(M.addDomain(d.state, "proxyDomains", "kinopoisk.ru").error, "exists")
+assert.strictEqual(M.addDomain(d.state, "proxyDomains", "not a domain").error, "invalid")
+d = M.addDomain(d.state, "directDomains", "kinopoisk.ru")
+assert.deepStrictEqual(d.state.proxyDomains, [])
+assert.deepStrictEqual(d.state.directDomains, ["kinopoisk.ru"])
+assert.deepStrictEqual(M.removeDomain(d.state, "directDomains", "kinopoisk.ru").directDomains, [])
 
 console.log("ok")
