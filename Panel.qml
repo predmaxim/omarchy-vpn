@@ -413,6 +413,7 @@ Panel {
           }
 
           Text {
+            topPadding: Style.space(12)   // set the add section apart from the list
             text: root.tr("ADD SUBSCRIPTION")
             color: root.muted
             font.family: root.fontFamily
