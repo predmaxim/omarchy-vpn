@@ -2,6 +2,16 @@
 // Pure logic of predmaxim.vpn: state.json, mihomo's config, subscriptions and
 // links, status from mihomo's API. No QML in here, so node runs it (test.js).
 
+var TEST_URL = "https://www.gstatic.com/generate_204"
+var ERROR_COLOR = "#e5534b"
+var GLYPHS = { on: "\u{F0565}", off: "\u{F099E}", error: "\u{F0ECC}" }
+// Sites of a country go direct: its TLDs, mihomo's geosite list, its GeoIP code.
+var COUNTRIES = { ru: { suffixes: ["ru", "su", "xn--p1ai"], geosite: "category-ru", geoip: "RU" } }
+// Never through the tunnel: LAN, corporate VPNs, Tailscale, loopback.
+var PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "127.0.0.0/8"]
+var RETRY = [5000, 15000, 60000]
+var RETRY_LAST = 300000
+
 function defaults(secret) {
   return { version: 1, secret: secret || "", port: 9097, enabled: false, active: "",
     subscriptions: [], country: "ru", blockAds: true, proxyDomains: [], directDomains: [] }
@@ -158,3 +168,130 @@ function removeDomain(state, list, domain) {
   next[list] = next[list].filter(function(x) { return x !== domain })
   return next
 }
+
+function buildConfig(state) {
+  var subs = state.subscriptions
+  var providers = {}
+  subs.forEach(function(s) {
+    providers[s.id] = s.kind === "url"
+      ? { type: "http", url: s.url, path: "./subs/" + s.id + ".txt", interval: s.interval || 3600 }
+      : { type: "file", path: "./links/" + s.id + ".txt" }
+  })
+  // The active subscription first: mihomo falls back to the first one when it lost its saved choice.
+  var order = subs.map(function(s) { return s.id }).sort(function(a, b) {
+    return (b === state.active) - (a === state.active)
+  })
+  var groups = [{ name: "VPN", type: "select", proxies: order.length ? order : ["DIRECT"] }]
+  subs.forEach(function(s) {
+    groups.push({ name: s.id, type: "url-test", use: [s.id], url: TEST_URL,
+      interval: 300, tolerance: 50, timeout: 5000, "max-failed-times": 3 })
+  })
+  var rules = []
+  state.proxyDomains.forEach(function(d) { rules.push("DOMAIN-SUFFIX," + d + ",VPN") })
+  state.directDomains.forEach(function(d) { rules.push("DOMAIN-SUFFIX," + d + ",DIRECT") })
+  PRIVATE.forEach(function(c) { rules.push("IP-CIDR," + c + ",DIRECT,no-resolve") })
+  if (state.blockAds) rules.push("GEOSITE,category-ads-all,REJECT")
+  var country = COUNTRIES[state.country]
+  if (country) {
+    country.suffixes.forEach(function(t) { rules.push("DOMAIN-SUFFIX," + t + ",DIRECT") })
+    rules.push("GEOSITE," + country.geosite + ",DIRECT", "GEOIP," + country.geoip + ",DIRECT")
+  }
+  rules.push("MATCH,VPN")
+  return {
+    "mode": "rule",
+    "log-level": "warning",
+    "ipv6": false,
+    "external-controller": "127.0.0.1:" + state.port,
+    "secret": state.secret,
+    "profile": { "store-selected": true },
+    "dns": { "enable": true, "nameserver": ["system"] },
+    "tun": { "enable": !!state.enabled && subs.length > 0, "stack": "gvisor", "auto-route": true,
+      "auto-detect-interface": true, "dns-hijack": ["any:53"] },
+    "proxy-providers": providers,
+    "proxy-groups": groups,
+    "rules": rules
+  }
+}
+
+// What goes into ~/.config/mihomo (paths relative to it). config.yaml is
+// JSON, which is YAML too.
+function files(state) {
+  var out = [
+    { path: "state.json", data: JSON.stringify(state, null, 2) + "\n" },
+    { path: "config.yaml", data: JSON.stringify(buildConfig(state), null, 2) + "\n" }
+  ]
+  state.subscriptions.forEach(function(s) {
+    if (s.kind === "links") out.push({ path: "links/" + s.id + ".txt", data: s.links + "\n" })
+  })
+  return out
+}
+
+// Files reach the writer through its environment, not argv: argv is readable
+// by every user (/proc/<pid>/cmdline), the environment only by its owner.
+function writerEnv(state) {
+  var list = files(state)
+  var env = {
+    FILE_COUNT: String(list.length),
+    KEEP_SUBS: state.subscriptions.filter(function(s) { return s.kind === "url" })
+      .map(function(s) { return s.id + ".txt" }).join(" ")
+  }
+  list.forEach(function(f, i) { env["FILE_" + i + "_PATH"] = f.path; env["FILE_" + i + "_DATA"] = f.data })
+  return env
+}
+
+// sh -c WRITE_SCRIPT sh <dir>: writes every file (via .tmp + mv), drops link
+// files of removed subscriptions and caches of removed URL subscriptions.
+var WRITE_SCRIPT = [
+  'cd "$1" || exit 1',
+  'umask 077',
+  'mkdir -p links subs || exit 1',
+  'rm -f links/*.txt',
+  'for f in subs/*.txt; do [ -e "$f" ] || continue; case " $KEEP_SUBS " in *" ${f#subs/} "*) ;; *) rm -f "$f" ;; esac; done',
+  'i=0',
+  'while [ "$i" -lt "$FILE_COUNT" ]; do',
+  '  eval "p=\\$FILE_${i}_PATH; d=\\$FILE_${i}_DATA"',
+  '  printf "%s" "$d" > "$p.tmp" && mv "$p.tmp" "$p" || exit 1',
+  '  i=$((i + 1))',
+  'done'
+].join("\n")
+
+// GET /configs and GET /proxies -> what the icon needs. delay: last test of
+// the current server, 0 — it failed, -1 — not tested yet.
+function status(configs, proxies) {
+  var all = proxies && proxies.proxies ? proxies.proxies : {}
+  var vpn = all.VPN || {}
+  var group = all[vpn.now] || {}
+  var server = all[group.now] || {}
+  var history = server.history || []
+  var counts = {}
+  for (var name in all) if (all[name].type === "URLTest") counts[name] = (all[name].all || []).length
+  return { tun: !!(configs && configs.tun && configs.tun.enable), group: vpn.now || "", server: group.now || "",
+    delay: history.length ? history[history.length - 1].delay : -1, counts: counts }
+}
+
+function view(state, st, apiUp) {
+  var id = st.group || state.active
+  var sub = state.subscriptions.filter(function(s) { return s.id === id })[0]
+  var v = { kind: "on", name: sub ? sub.name : "", server: st.server, delay: st.delay }
+  if (!apiUp) v.kind = "down"
+  else if (!state.subscriptions.length) v.kind = "empty"
+  else if (!st.tun) v.kind = "off"
+  else if (!st.counts[st.group]) v.kind = "nosrv"
+  else if (st.delay === 0) v.kind = "dead"
+  return v
+}
+
+function isError(v) { return v.kind === "down" || v.kind === "nosrv" || v.kind === "dead" }
+
+function glyph(v) { return isError(v) ? GLYPHS.error : (v.kind === "on" ? GLYPHS.on : GLYPHS.off) }
+
+function tooltip(v, tr) {
+  if (v.kind === "down") return tr("VPN service is not running")
+  if (v.kind === "empty") return tr("VPN: no subscriptions")
+  if (v.kind === "off") return tr("VPN is off")
+  if (v.kind === "nosrv") return tr("VPN: no servers in %1", v.name)
+  if (v.kind === "dead") return tr("VPN: no connection to %1", v.name)
+  return tr("VPN: %1 · %2 · %3 ms", v.name, v.server, v.delay > 0 ? v.delay : "…")
+}
+
+function retryDelay(attempt) { return attempt < RETRY.length ? RETRY[attempt] : RETRY_LAST }
