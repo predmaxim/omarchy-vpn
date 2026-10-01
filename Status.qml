@@ -35,9 +35,12 @@ Item {
       if (!ok) { root.fail(); return }
       root.call("GET", "/proxies", null, function(ok2, proxies) {
         if (!ok2) { root.fail(); return }
-        root.failures = 0
-        root.st = Model.status(configs, proxies)
-        root.polled()
+        root.call("GET", "/providers/proxies", null, function(ok3, providers) {
+          if (!ok3) { root.fail(); return }
+          root.failures = 0
+          root.st = Model.status(configs, proxies, providers)
+          root.polled()
+        })
       })
     })
   }

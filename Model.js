@@ -255,13 +255,16 @@ var WRITE_SCRIPT = [
   'done'
 ].join("\n")
 
-// GET /configs and GET /proxies -> what the icon needs. delay: last test of
-// the current server, 0 — it failed, -1 — not tested yet.
-function status(configs, proxies) {
+// GET /configs, /proxies and /providers/proxies -> what the icon needs.
+// Groups live in /proxies; servers of a subscription only in its provider, so
+// their test history comes from there. delay: last test of the current server,
+// 0 — it failed, -1 — not tested yet.
+function status(configs, proxies, providers) {
   var all = proxies && proxies.proxies ? proxies.proxies : {}
   var vpn = all.VPN || {}
   var group = all[vpn.now] || {}
-  var server = all[group.now] || {}
+  var provider = providers && providers.providers && providers.providers[vpn.now] || {}
+  var server = (provider.proxies || []).filter(function(p) { return p.name === group.now })[0] || {}
   var history = server.history || []
   var counts = {}
   for (var name in all) if (all[name].type === "URLTest") counts[name] = (all[name].all || []).length
@@ -291,7 +294,10 @@ function tooltip(v, tr) {
   if (v.kind === "off") return tr("VPN is off")
   if (v.kind === "nosrv") return tr("VPN: no servers in %1", v.name)
   if (v.kind === "dead") return tr("VPN: no connection to %1", v.name)
-  return tr("VPN: %1 · %2 · %3 ms", v.name, v.server, v.delay > 0 ? v.delay : "…")
+  var delay = v.delay > 0 ? v.delay : "…"
+  // A one-link subscription is named like its server: say it once.
+  if (v.server === v.name) return tr("VPN: %1 · %2 ms", v.name, delay)
+  return tr("VPN: %1 · %2 · %3 ms", v.name, v.server, delay)
 }
 
 function retryDelay(attempt) { return attempt < RETRY.length ? RETRY[attempt] : RETRY_LAST }
