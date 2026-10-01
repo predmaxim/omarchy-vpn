@@ -182,4 +182,17 @@ for (const f of ["Panel.qml", "Indicator.qml", "Menu.qml", "Status.qml", "Model.
     assert.ok(Object.prototype.hasOwnProperty.call(I.TABLES.ru, JSON.parse(`"${m[1]}"`)), f + ": no ru for " + m[1])
 }
 
+// QML: no own property may reuse a built-in Item/Panel property name — it
+// shadows the built-in and reads as undefined (rules.md §9: "state" broke Status.qml,
+// id "status" read as Loader.status inside PanelHero's components)
+const builtins = ["state", "status", "data", "children", "visible", "enabled", "opacity", "parent", "left", "right", "top", "bottom", "x", "y", "width", "height", "states", "focus", "settings", "opened", "bar"]
+for (const f of ["Panel.qml", "Status.qml", "Menu.qml", "Indicator.qml"]) {
+  if (!fs.existsSync(__dirname + "/" + f)) continue
+  for (const m of fs.readFileSync(__dirname + "/" + f, "utf8").matchAll(/^\s*(?:readonly\s+|required\s+)?property\s+\S+\s+(\w+)/gm))
+    assert.ok(!builtins.includes(m[1]), f + ": property '" + m[1] + "' shadows a built-in")
+  // ids too: components that PanelHero loads (a Loader, which has "status") see Loader's property first
+  for (const m of fs.readFileSync(__dirname + "/" + f, "utf8").matchAll(/\bid:\s*(\w+)/g))
+    assert.ok(!builtins.includes(m[1]), f + ": id '" + m[1] + "' shadows a built-in")
+}
+
 console.log("ok")
