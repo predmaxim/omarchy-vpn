@@ -18,7 +18,12 @@ var TABLES = {
     "Turn off": "Выключить", "Turn on": "Включить", "Subscriptions": "Подписки", "Rules": "Правила",
     "Delete %1?": "Удалить %1?", "Servers: %1": "Серверов: %1", "Delete": "Удалить", "Yes": "Да", "No": "Нет",
     "No subscriptions yet: copy a link or a subscription URL and press “From clipboard”.":
-      "Подписок пока нет: скопируйте ссылку или адрес подписки и нажмите «Из буфера»."
+      "Подписок пока нет: скопируйте ссылку или адрес подписки и нажмите «Из буфера».",
+    "No link or subscription found": "Ссылка или подписка не найдена", "Already added": "Уже добавлена",
+    "Added: %1": "Добавлена: %1", "No usable servers in %1": "В %1 нет подходящих серверов",
+    "Could not download the subscription": "Не удалось скачать подписку",
+    "No QR code found in the selected area": "В выделенной области нет QR-кода",
+    "From clipboard": "Из буфера", "QR from screen": "QR с экрана"
   }
 }
 

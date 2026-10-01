@@ -28,8 +28,11 @@ Panel {
   property var pending: null
   property int retryAttempt: 0
 
+  // The plugin's own icon: the notification center shows -i, and "VPN" has no .desktop to look one up in.
+  readonly property string notifyIcon: String(Qt.resolvedUrl("icon.svg")).replace(/^file:\/\//, "")
+
   function notify(summary, body) {
-    Quickshell.execDetached(["notify-send", "-a", "VPN", summary, body || ""])
+    Quickshell.execDetached(["notify-send", "-a", "VPN", "-i", root.notifyIcon, summary, body || ""])
   }
 
   // Writes the files of `next`; with `reload`, mihomo then re-reads its
@@ -83,6 +86,40 @@ Panel {
     root.commit(Model.removeSubscription(vpn.saved, id), true, null)
   }
 
+  // Pasted or scanned text -> a new subscription. A URL is downloaded once for
+  // its name and to see it answers; links go straight in.
+  function addText(text) {
+    var found = Model.classify(text)
+    if (!found) { root.notify(root.tr("No link or subscription found"), ""); return }
+    if (found.kind === "links") { root.addSubscription(Model.linksSubscription(found.links)); return }
+    fetcher.url = found.url
+    fetcher.running = true
+  }
+
+  function addSubscription(sub) {
+    var r = Model.addSubscription(vpn.saved, sub)
+    if (r.error) { root.notify(root.tr("Already added"), sub.name); return }
+    root.commit(r.state, true, function() { root.verifyAdded(sub, 0) })
+  }
+
+  // mihomo loads a provider in the background: look for its servers three
+  // times, 2 s apart; none — the subscription goes again.
+  function verifyAdded(sub, attempt) {
+    vpn.call("GET", "/providers/proxies/" + sub.id, null, function(ok, data) {
+      var count = ok && data && data.proxies ? data.proxies.length : 0
+      if (count > 0) { root.notify(root.tr("Added: %1", sub.name), root.tr("Servers: %1", count)); return }
+      if (attempt < 2) { verifyTimer.sub = sub; verifyTimer.attempt = attempt + 1; verifyTimer.start(); return }
+      root.notify(root.tr("No usable servers in %1", sub.name), "")
+      root.commit(Model.removeSubscription(vpn.saved, sub.id), true, null)
+    })
+  }
+
+  // The modal hides first, or slurp would select over it.
+  function scanQr() {
+    root.close()
+    qrDelay.start()
+  }
+
   // Retries (spec "Повторы"): a dead current server — re-test its group; an
   // empty subscription — re-download it. 5 s, 15 s, 60 s, then every 5 min.
   function checkRetry() {
@@ -114,10 +151,56 @@ Panel {
 
   Timer { id: retryTimer; onTriggered: root.retryNow() }
 
+  Timer {
+    id: verifyTimer
+    property var sub: null
+    property int attempt: 0
+    interval: 2000
+    onTriggered: root.verifyAdded(sub, attempt)
+  }
+
+  Timer { id: qrDelay; interval: 250; onTriggered: qr.running = true }
+
+  // The URL goes through curl's --variable from the environment: argv is
+  // readable by every user, and subscription URLs carry keys.
+  Process {
+    id: fetcher
+    property string url: ""
+    environment: ({ VPN_URL: fetcher.url })
+    command: ["curl", "-sSL", "--max-time", "15", "--retry", "2", "--retry-delay", "3", "--retry-all-errors",
+      "-D", "-", "--variable", "%VPN_URL", "--expand-url", "{{VPN_URL}}"]
+    stdout: StdioCollector { id: fetched }
+    stderr: StdioCollector { id: fetchErrors }
+    onExited: function(code) {
+      if (code !== 0) root.notify(root.tr("Could not download the subscription"), fetchErrors.text.trim())
+      else root.addSubscription(Model.urlSubscription(fetcher.url, fetched.text))
+    }
+  }
+
+  Process {
+    id: paste
+    command: ["wl-paste", "-n", "-t", "text/plain"]
+    stdout: StdioCollector { id: pasted }
+    onExited: function(code) { root.addText(code === 0 ? pasted.text : "") }
+  }
+
+  // Exit 2 — the selection was cancelled: nothing to say.
+  Process {
+    id: qr
+    command: ["sh", "-c", 'g=$(slurp) || exit 2; grim -g "$g" - | zbarimg -q --raw -']
+    stdout: StdioCollector { id: scanned }
+    onExited: function(code) {
+      root.open()
+      if (code === 0 && scanned.text.trim()) root.addText(scanned.text)
+      else if (code !== 2) root.notify(root.tr("No QR code found in the selected area"), "")
+    }
+  }
+
   IpcHandler {
     target: "predmaxim.vpn-ctl"
     function power(): void { root.setEnabled(!vpn.saved.enabled) }
     function use(id: string): void { root.use(id) }
+    function add(text: string): void { root.addText(text) }
   }
 
   onOpenedChanged: if (opened) vpn.poll(); else root.confirmId = ""
@@ -320,6 +403,26 @@ Panel {
             wrapMode: Text.Wrap
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
+          }
+
+          Row {
+            spacing: Style.space(8)
+            Button {
+              iconText: "\u{F014A}"
+              text: root.tr("From clipboard")
+              bordered: true
+              foreground: root.fg
+              fontFamily: root.fontFamily
+              onClicked: paste.running = true
+            }
+            Button {
+              iconText: "\u{F0433}"
+              text: root.tr("QR from screen")
+              bordered: true
+              foreground: root.fg
+              fontFamily: root.fontFamily
+              onClicked: root.scanQr()
+            }
           }
         }
       }
