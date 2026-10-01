@@ -23,7 +23,11 @@ var TABLES = {
     "Added: %1": "Добавлена: %1", "No usable servers in %1": "В %1 нет подходящих серверов",
     "Could not download the subscription": "Не удалось скачать подписку",
     "No QR code found in the selected area": "В выделенной области нет QR-кода",
-    "From clipboard": "Из буфера", "QR from screen": "QR с экрана"
+    "From clipboard": "Из буфера", "QR from screen": "QR с экрана",
+    "Not a domain: %1": "Не домен: %1", "Domain…": "Домен…", "Direct: country": "Напрямую: страна",
+    "Russia": "Россия", "Don't use": "Не использовать", "Block ads": "Блокировать рекламу",
+    "ALWAYS THROUGH VPN": "ВСЕГДА ЧЕРЕЗ VPN", "ALWAYS DIRECT": "ВСЕГДА НАПРЯМУЮ",
+    "ADD SUBSCRIPTION": "ДОБАВИТЬ ПОДПИСКУ"
   }
 }
 

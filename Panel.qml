@@ -120,6 +120,13 @@ Panel {
     qrDelay.start()
   }
 
+  function addDomain(list, text) {
+    var r = Model.addDomain(vpn.saved, list, text)
+    if (r.error === "invalid") { root.notify(root.tr("Not a domain: %1", text.trim()), ""); return false }
+    if (!r.error) root.commit(r.state, true, null)
+    return true
+  }
+
   // Retries (spec "Повторы"): a dead current server — re-test its group; an
   // empty subscription — re-download it. 5 s, 15 s, 60 s, then every 5 min.
   function checkRetry() {
@@ -405,6 +412,15 @@ Panel {
             font.pixelSize: Style.font.body
           }
 
+          Text {
+            text: root.tr("ADD SUBSCRIPTION")
+            color: root.muted
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            font.letterSpacing: 1.2
+          }
+
           Row {
             spacing: Style.space(8)
             Button {
@@ -422,6 +438,135 @@ Panel {
               foreground: root.fg
               fontFamily: root.fontFamily
               onClicked: root.scanQr()
+            }
+          }
+        }
+
+        Flickable {
+          id: rulesTab
+          visible: root.tab === "rules"
+          enabled: vpn.apiUp && !root.busy
+          width: parent.width
+          height: Math.min(rulesColumn.implicitHeight, modal.height * 0.55)
+          contentHeight: rulesColumn.implicitHeight
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+
+          Column {
+            id: rulesColumn
+            width: rulesTab.width
+            spacing: Style.space(14)
+
+            Item {
+              width: parent.width
+              height: country.implicitHeight
+              Text {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.tr("Direct: country")
+                color: root.fg
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+              Dropdown {
+                id: country
+                anchors.right: parent.right
+                width: Style.spacing.dropdownWidth
+                showLabel: false
+                options: [{ value: "ru", label: root.tr("Russia") }, { value: "none", label: root.tr("Don't use") }]
+                value: vpn.saved.country || "none"
+                foreground: root.fg
+                fontFamily: root.fontFamily
+                onChanged: function(value) {
+                  var next = value === "none" ? "" : value
+                  if (next !== vpn.saved.country) root.commit(Model.patch(vpn.saved, { country: next }), true, null)
+                }
+              }
+            }
+
+            Item {
+              width: parent.width
+              height: ads.implicitHeight
+              Text {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.tr("Block ads")
+                color: root.fg
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+              ToggleSwitch {
+                id: ads
+                anchors.right: parent.right
+                checked: vpn.saved.blockAds
+                foreground: root.fg
+                onToggled: root.commit(Model.patch(vpn.saved, { blockAds: !vpn.saved.blockAds }), true, null)
+              }
+            }
+
+            PanelSeparator { foreground: root.fg }
+
+            // Two rule lists: caption, a borderless field (Enter adds), domains with ✕.
+            Repeater {
+              model: [{ list: "proxyDomains", title: root.tr("ALWAYS THROUGH VPN") },
+                      { list: "directDomains", title: root.tr("ALWAYS DIRECT") }]
+              delegate: Column {
+                id: domains
+                required property var modelData
+                width: rulesColumn.width
+                spacing: Style.spacing.xs
+
+                Text {
+                  text: domains.modelData.title
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  font.letterSpacing: 1.2
+                }
+
+                TextField {
+                  width: domains.width
+                  height: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
+                  leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
+                  background: null
+                  placeholderText: root.tr("Domain…")
+                  placeholderTextColor: Util.alpha(root.fg, 0.58)
+                  foreground: root.fg
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  onAccepted: if (root.addDomain(domains.modelData.list, text)) text = ""
+                }
+
+                Repeater {
+                  model: vpn.saved[domains.modelData.list]
+                  delegate: Item {
+                    id: domainRow
+                    required property string modelData
+                    width: domains.width
+                    height: Math.max(Style.space(32), domainText.implicitHeight + Style.spacing.xs * 2)
+                    Text {
+                      id: domainText
+                      anchors.left: parent.left
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: domainRow.modelData
+                      color: root.fg
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                    }
+                    Button {
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      iconText: "\u{F0156}"
+                      iconSize: Style.font.body
+                      tooltipText: root.tr("Delete")
+                      foreground: root.fg
+                      fontFamily: root.fontFamily
+                      onClicked: root.commit(Model.removeDomain(vpn.saved, domains.modelData.list, domainRow.modelData), true, null)
+                    }
+                  }
+                }
+              }
             }
           }
         }
