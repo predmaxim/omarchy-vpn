@@ -5,7 +5,7 @@ const src = fs.readFileSync(__dirname + "/Model.js", "utf8").replace(".pragma li
 const M = new Function(src + `; return { defaults, load, randomSecret, clone, patch, idFor, classify, host,
   decodeTitle, splitResponse, urlSubscription, linksSubscription, addSubscription, removeSubscription, useSubscription,
   setEnabled, normalizeDomain, addDomain, removeDomain, buildConfig, files, writerEnv, WRITE_SCRIPT, status, view, isError,
-  glyph, tooltip, retryDelay, TEST_URL }`)()
+  glyph, tooltip, retryDelay, TEST_URL, parseState }`)()
 
 // state.json: broken or partial files fall back to defaults field by field
 assert.deepStrictEqual(M.load("{broken"), M.defaults(""))
@@ -204,5 +204,30 @@ for (const f of ["Panel.qml", "Status.qml", "Menu.qml"]) {
   for (const m of fs.readFileSync(__dirname + "/" + f, "utf8").matchAll(/\bid:\s*(\w+)/g))
     assert.ok(!builtins.includes(m[1]), f + ": id '" + m[1] + "' shadows a built-in")
 }
+
+// state.json: a file that does not parse is "broken" — never to be overwritten (it holds the only copy of the keys)
+assert.deepStrictEqual(M.parseState("{broken"), { state: M.defaults(""), broken: true })
+assert.deepStrictEqual(M.parseState(JSON.stringify(cs)), { state: cs, broken: false })
+assert.strictEqual(M.parseState('{"secret":"x"}').broken, false)
+
+// the writer on a fresh machine: ~/.config/mihomo does not exist yet
+const fresh = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "vpn-")), "mihomo")
+cp.execFileSync("sh", ["-c", M.WRITE_SCRIPT, "sh", fresh], { env: Object.assign({}, process.env, M.writerEnv(cs)) })
+assert.deepStrictEqual(JSON.parse(fs.readFileSync(fresh + "/state.json", "utf8")), cs)
+// first run (FIRST_RUN=1) never replaces an existing state.json — another widget (one per monitor) got there first
+const other = M.patch(cs, { secret: "other" })
+cp.execFileSync("sh", ["-c", M.WRITE_SCRIPT, "sh", fresh], { env: Object.assign({}, process.env, M.writerEnv(other), { FIRST_RUN: "1" }) })
+assert.strictEqual(JSON.parse(fs.readFileSync(fresh + "/state.json", "utf8")).secret, "sec")
+assert.strictEqual(JSON.parse(fs.readFileSync(fresh + "/config.yaml", "utf8")).secret, "sec")
+// writers take turns: one waits while another holds the lock, then writes and releases it
+fs.mkdirSync(fresh + "/.lock")
+const waiting = cp.spawn("sh", ["-c", M.WRITE_SCRIPT, "sh", fresh], { env: Object.assign({}, process.env, M.writerEnv(other)) })
+cp.execFileSync("sleep", ["0.5"])
+assert.strictEqual(JSON.parse(fs.readFileSync(fresh + "/state.json", "utf8")).secret, "sec")
+fs.rmdirSync(fresh + "/.lock")
+cp.execFileSync("sh", ["-c", "for i in 1 2 3 4 5 6 7 8 9 10; do [ -d \"$0/.lock\" ] || [ \"$(grep -c other \"$0/state.json\")\" = 0 ] || exit 0; sleep 0.2; done; exit 1", fresh])
+waiting.kill()
+assert.ok(!fs.existsSync(fresh + "/.lock"))
+fs.rmSync(path.dirname(fresh), { recursive: true })
 
 console.log("ok")

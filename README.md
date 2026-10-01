@@ -17,7 +17,7 @@ git clone https://github.com/predmaxim/omarchy-vpn.git ~/.config/omarchy/plugins
 yay -S mihomo-bin
 sudo install -Dm644 ~/.config/omarchy/plugins/predmaxim.vpn/systemd/override.conf \
   /etc/systemd/system/mihomo@.service.d/override.conf
-omarchy bar put predmaxim.vpn      # the widget creates ~/.config/mihomo on first load
+omarchy bar put predmaxim.vpn      # first: the widget creates ~/.config/mihomo (config + API secret)
 sudo systemctl daemon-reload && sudo systemctl enable --now mihomo@$USER
 ```
 

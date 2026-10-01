@@ -18,15 +18,19 @@ function defaults(secret) {
     subscriptions: [], country: "ru", blockAds: true, proxyDomains: [], directDomains: [] }
 }
 
-// state.json text -> state. Missing fields take their defaults; a broken file
-// gives the defaults (with no secret, so the caller makes a new one).
-function load(text) {
-  var parsed = {}
-  try { parsed = JSON.parse(text) || {} } catch (e) {}
+// state.json text -> { state, broken }. Missing fields take their defaults.
+// A file that does not parse is broken: it holds the only copy of the
+// subscription keys, so the widget must not write over it.
+function parseState(text) {
+  var parsed = null
+  try { parsed = JSON.parse(text) } catch (e) {}
   var out = defaults("")
+  if (!parsed || typeof parsed !== "object") return { state: out, broken: true }
   for (var key in out) if (parsed[key] !== undefined) out[key] = parsed[key]
-  return out
+  return { state: out, broken: false }
 }
+
+function load(text) { return parseState(text).state }
 
 // API secret: 32 hex digits from random() in [0, 1).
 function randomSecret(random) {
@@ -242,9 +246,18 @@ function writerEnv(state) {
 
 // sh -c WRITE_SCRIPT sh <dir>: writes every file (via .tmp + mv), drops link
 // files of removed subscriptions and caches of removed URL subscriptions.
+// Creates <dir> on a fresh machine. Writers take turns through a .lock dir
+// (there is one widget per monitor); a lock left by a killed writer is broken
+// after 5 s. With FIRST_RUN set it writes nothing if state.json exists:
+// another widget made it first.
 var WRITE_SCRIPT = [
-  'cd "$1" || exit 1',
   'umask 077',
+  'mkdir -p "$1" && cd "$1" || exit 1',
+  'n=0',
+  'until mkdir .lock 2>/dev/null; do sleep 0.1; n=$((n + 1)); [ "$n" -lt 50 ] || { rmdir .lock 2>/dev/null; n=0; }; done',
+  "trap 'rmdir .lock' EXIT",
+  'trap "exit 1" INT TERM',
+  '[ -n "$FIRST_RUN" ] && [ -e state.json ] && exit 0',
   'mkdir -p links subs || exit 1',
   'rm -f links/*.txt',
   'for f in subs/*.txt; do [ -e "$f" ] || continue; case " $KEEP_SUBS " in *" ${f#subs/} "*) ;; *) rm -f "$f" ;; esac; done',
