@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "predmaxim.vpn",
+  "name": "VPN (mihomo)",
+  "version": "1.0.0",
+  "author": "predmaxim",
+  "description": "VPN through mihomo in TUN mode: on/off, subscriptions from the clipboard or a QR code, per-domain rules",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Panel.qml" },
+  "barWidget": {
+    "displayName": "VPN",
+    "description": "mihomo VPN: on/off, subscriptions, rules",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
