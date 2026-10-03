@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls as QQC
 import Quickshell
 import Quickshell.Io
-import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -10,7 +9,7 @@ import "I18n.js" as I18n
 
 // VPN through mihomo (TUN). This widget owns every change: it writes
 // ~/.config/mihomo (state.json, config.yaml, link files) and drives mihomo's
-// API. The menu only reads and sends IPC.
+// API. The panel hangs off the bar icon.
 Panel {
   id: root
   moduleName: "predmaxim.vpn"
@@ -22,7 +21,11 @@ Panel {
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
 
   property string tab: "subs"
-  property string confirmId: ""
+  property string pendingId: ""
+  // The subscription row under the keyboard/mouse cursor (subs tab).
+  property int cursor: -1
+  // The domain field being typed into: the key catcher steps aside for it.
+  property Item editor: null
   property bool busy: false
   property var pending: null
   // Changes that arrived while another one was being written: they wait their turn.
@@ -128,8 +131,36 @@ Panel {
     })
   }
 
+  function moveCursor(dy) {
+    var count = vpn.saved.subscriptions.length
+    if (count === 0) { root.cursor = -1; return }
+    root.cursor = Math.max(0, Math.min(count - 1, root.cursor < 0 ? 0 : root.cursor + dy))
+  }
+
+  function cursorId() {
+    var sub = vpn.saved.subscriptions[root.cursor]
+    return root.tab === "subs" && sub ? sub.id : ""
+  }
+
+  function askRemove(id) {
+    if (!id || !vpn.apiUp || root.busy) return
+    root.pendingId = id
+    confirm.selectedIndex = 0   // never preselect the destructive button
+    confirm.opened = true
+  }
+
+  // Esc step by step: dialog -> domain field (clear, then leave) -> panel.
+  function back() {
+    if (confirm.opened) { confirm.opened = false; return }
+    if (root.editor) {
+      if (root.editor.text !== "") root.editor.text = ""
+      else keyCatcher.forceActiveFocus()
+      return
+    }
+    root.close()
+  }
+
   function remove(id) {
-    root.confirmId = ""
     root.commit(function(s) { return Model.removeSubscription(s, id) }, true, null)
   }
 
@@ -160,7 +191,7 @@ Panel {
     })
   }
 
-  // The modal hides first, or slurp would select over it.
+  // The panel hides first, or slurp would select over it.
   function scanQr() {
     root.close()
     qrDelay.start()
@@ -252,7 +283,7 @@ Panel {
     function add(text: string): void { root.addText(text) }
   }
 
-  onOpenedChanged: if (opened) vpn.poll(); else root.confirmId = ""
+  onOpenedChanged: if (opened) vpn.poll(); else { confirm.opened = false; root.cursor = -1 }
 
   implicitWidth: icon.implicitWidth
   implicitHeight: icon.implicitHeight
@@ -264,50 +295,63 @@ Panel {
     tooltipText: Model.tooltip(vpn.view, root.tr)
     foreground: Model.isError(vpn.view) ? Color.urgent : (vpn.view.kind === "on" ? root.fg : root.muted)
     onPressed: function(button) {
-      if (button === Qt.RightButton) menu.open = !menu.open
-      else if (button === Qt.MiddleButton) root.setEnabled(!vpn.saved.enabled)
+      if (button === Qt.RightButton && vpn.saved.subscriptions.length) root.setEnabled(!vpn.saved.enabled)
       else root.toggle()
     }
   }
 
-  Menu { id: menu; anchorItem: icon; bar: root.bar; vpnState: vpn }
+  KeyboardPanel {
+    id: panel
+    anchorItem: icon
+    owner: root
+    bar: root.bar
+    open: root.opened
+    focusTarget: keyCatcher
+    contentWidth: panel.fittedContentWidth(Style.space(480))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight)
 
-  // A modal in the middle of the screen (rules.md §9): a click on the dimmed
-  // screen or Esc closes it.
-  PanelWindow {
-    id: modal
-    screen: root.QsWindow.window ? root.QsWindow.window.screen : null
-    visible: root.opened
-    color: Color.menu.scrim
-    exclusionMode: ExclusionMode.Ignore
-    anchors { top: true; bottom: true; left: true; right: true }
-    WlrLayershell.namespace: "predmaxim-vpn"
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    // What the catcher lets through: the dialog's keys, Delete, and Esc while typing.
+    Item {
+      anchors.fill: parent
+      Keys.onPressed: function(event) {
+        if (confirm.opened) { if (confirm.handleKey(event)) event.accepted = true; return }
+        if (event.key === Qt.Key_Escape && root.editor) { root.back(); event.accepted = true; return }
+        if (event.key === Qt.Key_Delete && !root.editor) { root.askRemove(root.cursorId()); event.accepted = true }
+      }
 
-    MouseArea { anchors.fill: parent; onClicked: root.close() }
+    PanelKeyCatcher {
+      id: keyCatcher
+      anchors.fill: parent
+      blocked: confirm.opened || country.popupOpen || root.editor !== null
+      onMoveRequested: function(dx, dy) {
+        if (dx) root.tab = dx < 0 ? "subs" : "rules"
+        else if (root.tab === "subs") { root.moveCursor(dy); subsList.positionViewAtIndex(root.cursor, ListView.Contain) }
+      }
+      onActivateRequested: if (root.cursorId()) root.use(root.cursorId())
+      onDeleteRequested: root.askRemove(root.cursorId())
+      onCloseRequested: root.back()
+      onTabRequested: function(direction) { root.switchPanel(direction) }
 
-    BorderSurface {
-      id: card
-      anchors.centerIn: parent
-      width: Math.min(Style.space(480), modal.width - Style.space(80))
-      height: Math.min(column.implicitHeight + card.contentTopInset + card.contentBottomInset, modal.height * 0.85)
-      color: Color.popups.background
-      borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
-      padding: Style.spacing.panelPadding
-      radius: Style.cornerRadius
-      focus: true
-      Keys.onEscapePressed: root.close()
+      ConfirmDialog {
+        id: confirm
+        anchors.fill: parent
+        z: 10
+        message: root.tr("Delete %1?", (vpn.saved.subscriptions.find(function(s) { return s.id === root.pendingId }) || {}).name || "")
+        cancelText: root.tr("Cancel")
+        confirmText: root.tr("Delete")
+        selectedIndex: 0
+        fontFamily: root.fontFamily
+        onConfirmed: { opened = false; root.remove(root.pendingId) }
+        onCanceled: opened = false
+      }
 
-      MouseArea { anchors.fill: parent }   // clicks on the card stay on it
+      PointerMoveGate { id: pointerGate; referenceItem: column }
 
       Column {
         id: column
-        anchors.fill: parent
-        anchors.topMargin: card.contentTopInset
-        anchors.rightMargin: card.contentRightInset
-        anchors.bottomMargin: card.contentBottomInset
-        anchors.leftMargin: card.contentLeftInset
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
         spacing: Style.space(14)
 
         PanelHero {
@@ -344,10 +388,13 @@ Panel {
 
         PanelSeparator { foreground: root.fg }
 
-        Row {
-          spacing: Style.space(8)
-          Button { text: root.tr("Subscriptions"); selected: root.tab === "subs"; foreground: root.fg; fontFamily: root.fontFamily; onClicked: root.tab = "subs" }
-          Button { text: root.tr("Rules"); selected: root.tab === "rules"; foreground: root.fg; fontFamily: root.fontFamily; onClicked: root.tab = "rules" }
+        ButtonGroup {
+          options: [{ value: "subs", label: root.tr("Subscriptions") }, { value: "rules", label: root.tr("Rules") }]
+          value: root.tab
+          focusable: false
+          foreground: root.fg
+          fontFamily: root.fontFamily
+          onChanged: function(value) { root.tab = value }
         }
 
         // Everything below changes mihomo: off while it is down or busy.
@@ -361,7 +408,7 @@ Panel {
           ListView {
             id: subsList
             width: parent.width
-            height: Math.min(contentHeight, modal.height * 0.4)
+            height: Math.min(contentHeight, Style.space(320))
             clip: true
             spacing: Style.spacing.xs
             boundsBehavior: Flickable.StopAtBounds
@@ -370,18 +417,19 @@ Panel {
             delegate: CursorSurface {
               id: row
               required property var modelData
+              required property int index
               width: subsList.width
-              readonly property bool confirming: root.confirmId === modelData.id
               readonly property var count: vpn.st.counts[modelData.id]
               implicitHeight: Math.max(Style.space(50), name.implicitHeight + Style.spacing.rowPaddingX * 2)
               foreground: root.fg
-              hasCursor: rowMouse.containsMouse
+              hasCursor: root.cursor === index
 
               MouseArea {
                 id: rowMouse
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
+                onPositionChanged: function(mouse) { if (pointerGate.moved(rowMouse, mouse)) root.cursor = row.index }
                 onClicked: root.use(row.modelData.id)
               }
 
@@ -405,7 +453,7 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
-                text: row.confirming ? root.tr("Delete %1?", row.modelData.name) : row.modelData.name
+                text: row.modelData.name
                 color: root.fg
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -420,7 +468,7 @@ Panel {
                 spacing: Style.space(6)
 
                 Text {
-                  visible: !row.confirming && row.count !== undefined
+                  visible: row.count !== undefined
                   anchors.verticalCenter: parent.verticalCenter
                   text: root.tr("Servers: %1", row.count)
                   color: root.muted
@@ -428,16 +476,13 @@ Panel {
                   font.pixelSize: Style.font.caption
                 }
                 Button {
-                  visible: !row.confirming
                   iconText: "\u{F0156}"
                   iconSize: Style.font.body
                   tooltipText: root.tr("Delete")
                   foreground: root.fg
                   fontFamily: root.fontFamily
-                  onClicked: root.confirmId = row.modelData.id
+                  onClicked: root.askRemove(row.modelData.id)
                 }
-                Button { visible: row.confirming; text: root.tr("Yes"); bordered: true; foreground: root.fg; fontFamily: root.fontFamily; onClicked: root.remove(row.modelData.id) }
-                Button { visible: row.confirming; text: root.tr("No"); foreground: root.fg; fontFamily: root.fontFamily; onClicked: root.confirmId = "" }
               }
             }
           }
@@ -488,7 +533,7 @@ Panel {
           visible: root.tab === "rules"
           enabled: vpn.apiUp && !root.busy
           width: parent.width
-          height: Math.min(rulesColumn.implicitHeight, modal.height * 0.55)
+          height: Math.min(rulesColumn.implicitHeight, Style.space(440))
           contentHeight: rulesColumn.implicitHeight
           clip: true
           boundsBehavior: Flickable.StopAtBounds
@@ -577,9 +622,10 @@ Panel {
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                   onAccepted: if (root.addDomain(domains.modelData.list, text)) text = ""
+                  onActiveFocusChanged: if (activeFocus) root.editor = this; else if (root.editor === this) root.editor = null
                 }
 
-                // A list of its own scroll height, so new domains don't stretch the modal.
+                // A list of its own scroll height, so new domains don't stretch the panel.
                 ListView {
                   id: domainList
                   width: domains.width
@@ -622,4 +668,5 @@ Panel {
       }
     }
   }
+}
 }
