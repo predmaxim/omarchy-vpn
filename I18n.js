@@ -11,12 +11,11 @@ var TABLES = {
     "VPN: no servers in %1": "VPN: в %1 нет серверов",
     "VPN: no connection to %1": "VPN: нет связи с серверами %1",
     "VPN: %1 · %2 · %3 ms": "VPN: %1 · %2 · %3 мс", "VPN: %1 · %2 ms": "VPN: %1 · %2 мс",
-    "Turn VPN off": "Выключить VPN", "Turn VPN on": "Включить VPN", "Settings…": "Настройки…",
     "Could not save VPN settings": "Не удалось сохранить настройки VPN",
     "mihomo rejected the configuration": "mihomo отверг конфигурацию",
     "VPN is on": "VPN включён", "Check: systemctl status mihomo@%1": "Проверьте: systemctl status mihomo@%1",
     "Turn off": "Выключить", "Turn on": "Включить", "Subscriptions": "Подписки", "Rules": "Правила",
-    "Delete %1?": "Удалить %1?", "Servers: %1": "Серверов: %1", "Delete": "Удалить", "Yes": "Да", "No": "Нет",
+    "Delete %1?": "Удалить %1?", "Servers: %1": "Серверов: %1", "Delete": "Удалить", "Cancel": "Отмена",
     "No subscriptions yet: copy a link or a subscription URL and press “From clipboard”.":
       "Подписок пока нет: скопируйте ссылку или адрес подписки и нажмите «Из буфера».",
     "No link or subscription found": "Ссылка или подписка не найдена", "Already added": "Уже добавлена",

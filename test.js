@@ -186,7 +186,7 @@ assert.deepStrictEqual([0, 1, 2, 3, 9].map(M.retryDelay), [5000, 15000, 60000, 3
 
 // Every tr() in the QML and Model.js has a Russian line
 const I = new Function(fs.readFileSync(__dirname + "/I18n.js", "utf8").replace(".pragma library", "") + "; return { TABLES }")()
-for (const f of ["Panel.qml", "Menu.qml", "Status.qml", "Model.js"]) {
+for (const f of ["Panel.qml", "Status.qml", "Model.js"]) {
   if (!fs.existsSync(__dirname + "/" + f)) continue
   for (const m of fs.readFileSync(__dirname + "/" + f, "utf8").matchAll(/\btr\("((?:[^"\\]|\\.)*)"/g))
     assert.ok(Object.prototype.hasOwnProperty.call(I.TABLES.ru, JSON.parse(`"${m[1]}"`)), f + ": no ru for " + m[1])
@@ -196,7 +196,7 @@ for (const f of ["Panel.qml", "Menu.qml", "Status.qml", "Model.js"]) {
 // shadows the built-in and reads as undefined (rules.md §9: "state" broke Status.qml,
 // id "status" read as Loader.status inside PanelHero's components)
 const builtins = ["state", "status", "data", "children", "visible", "enabled", "opacity", "parent", "left", "right", "top", "bottom", "x", "y", "width", "height", "states", "focus", "settings", "opened", "bar"]
-for (const f of ["Panel.qml", "Status.qml", "Menu.qml"]) {
+for (const f of ["Panel.qml", "Status.qml"]) {
   if (!fs.existsSync(__dirname + "/" + f)) continue
   for (const m of fs.readFileSync(__dirname + "/" + f, "utf8").matchAll(/^\s*(?:readonly\s+|required\s+)?property\s+\S+\s+(\w+)/gm))
     assert.ok(!builtins.includes(m[1]), f + ": property '" + m[1] + "' shadows a built-in")

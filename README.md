@@ -2,7 +2,7 @@
 
 An Omarchy shell plugin that runs your VPN through [mihomo](https://github.com/MetaCubeX/mihomo) in TUN mode: the whole machine's traffic goes through mihomo, and mihomo decides per rule what goes through the VPN and what goes direct. No app needs a proxy setting.
 
-- **On/off** — the icon's middle click, the menu, or the modal.
+- **On/off** — the icon's right click, or the button in the panel (left click). Keys in the panel: ↑/↓ subscription, Enter use it, Delete remove it (asks first), ←/→ tabs, Tab next panel, Esc back.
 - **Subscriptions** — add a subscription URL or proxy links (`hy2://`, `vless://`, `trojan://`, … — whatever mihomo parses) from the clipboard or from a QR code on screen. Pick the active subscription by hand; inside it mihomo keeps the fastest server (`url-test`) and switches when one dies.
 - **Rules** — a country whose sites go direct (Russia, or none), ad blocking, and your own "always through VPN" / "always direct" domain lists (subdomains included). Private networks (LAN, corporate VPNs, Tailscale) always go direct.
 
@@ -33,7 +33,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now mihomo@$USER
 ## IPC
 
 ```bash
-omarchy-shell predmaxim.vpn toggle            # the settings modal (open / close too)
+omarchy-shell predmaxim.vpn toggle            # the panel (open / close too)
 omarchy-shell predmaxim.vpn-ctl power         # VPN on/off
 omarchy-shell predmaxim.vpn-ctl use <id>      # active subscription (ids in state.json)
 omarchy-shell predmaxim.vpn-ctl add '<text>'  # add a subscription URL or links
