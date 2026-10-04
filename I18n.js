@@ -25,6 +25,7 @@ var TABLES = {
     "From clipboard": "Из буфера", "QR from screen": "QR с экрана",
     "Not a domain: %1": "Не домен: %1", "Domain…": "Домен…", "Direct: country": "Напрямую: страна",
     "Russia": "Россия", "Don't use": "Не использовать", "Block ads": "Блокировать рекламу",
+    "Switch to a working subscription": "Переключаться на рабочую подписку",
     "ALWAYS THROUGH VPN": "ВСЕГДА ЧЕРЕЗ VPN", "ALWAYS DIRECT": "ВСЕГДА НАПРЯМУЮ",
     "ADD SUBSCRIPTION": "ДОБАВИТЬ ПОДПИСКУ",
     "VPN did not start": "VPN не запустился", "VPN settings file is damaged": "Файл настроек VPN повреждён",
