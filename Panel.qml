@@ -75,7 +75,7 @@ Panel {
     vpn.quiet = true
     vpn.call("PUT", "/configs?force=true", { path: vpn.dir + "/config.yaml" }, function(ok, data) {
       vpn.quiet = false
-      if (ok) { root.done(); if (p.after) p.after(); vpn.poll(); return }
+      if (ok) { root.done(); if (p.after) p.after(); root.probe(); return }
       root.notify(root.tr("mihomo rejected the configuration"), data && data.message ? data.message : "")
       root.busy = false
       root.pending = null
@@ -131,8 +131,16 @@ Panel {
     var next = Model.useSubscription(vpn.saved, id)
     if (next === vpn.saved || root.busy) return
     vpn.call("PUT", "/proxies/VPN", { name: id }, function(ok) {
-      if (ok) root.commit(function(s) { return Model.useSubscription(s, id) }, false, function() { vpn.poll() })
+      if (ok) root.commit(function(s) { return Model.useSubscription(s, id) }, false, root.probe)
     })
+  }
+
+  // Tests every subscription now: until its first check (a minute) mihomo's
+  // fallback takes a dead subscription for live and stays on it.
+  function probe() {
+    vpn.call("GET", "/group/VPN/delay?url=" + encodeURIComponent(Model.TEST_URL) + "&timeout=5000", null,
+      function() { vpn.poll() })
+    vpn.poll()
   }
 
   function moveCursor(dy) {
