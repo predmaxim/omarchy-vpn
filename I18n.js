@@ -14,7 +14,7 @@ var TABLES = {
     "Could not save VPN settings": "Не удалось сохранить настройки VPN",
     "mihomo rejected the configuration": "mihomo отверг конфигурацию",
     "VPN is on": "VPN включён", "Check: systemctl status mihomo@%1": "Проверьте: systemctl status mihomo@%1",
-    "Turn off": "Выключить", "Turn on": "Включить", "Subscriptions": "Подписки", "Rules": "Правила",
+    "Turn off": "Выключить", "Turn on": "Включить", "Settings": "Настройки", "Back": "Назад", "Subscriptions": "Подписки", "Rules": "Правила",
     "Delete %1?": "Удалить %1?", "Servers: %1": "Серверов: %1", "Delete": "Удалить", "Cancel": "Отмена",
     "No subscriptions yet: copy a link or a subscription URL and press “From clipboard”.":
       "Подписок пока нет: скопируйте ссылку или адрес подписки и нажмите «Из буфера».",

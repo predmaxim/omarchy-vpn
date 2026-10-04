@@ -20,10 +20,13 @@ Panel {
   readonly property color muted: Qt.darker(root.fg, 1.4)
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
 
+  // Page: "subs" (main) or "rules" (settings, behind the header gear).
   property string tab: "subs"
   property string pendingId: ""
-  // The subscription row under the keyboard/mouse cursor (subs tab).
+  // The subscription row under the keyboard/mouse cursor (subs page);
+  // -2: the header, where headCol picks the gear/Back (0) or the switch (1).
   property int cursor: -1
+  property int headCol: 0
   // The domain field being typed into: the key catcher steps aside for it.
   property Item editor: null
   property bool busy: false
@@ -132,9 +135,19 @@ Panel {
   }
 
   function moveCursor(dy) {
-    var count = vpn.saved.subscriptions.length
-    if (count === 0) { root.cursor = -1; return }
+    var count = root.tab === "subs" ? vpn.saved.subscriptions.length : 0
+    if (dy < 0 && root.cursor <= 0) { root.cursor = -2; return }
+    if (count === 0) { root.cursor = dy > 0 ? -1 : -2; return }
     root.cursor = Math.max(0, Math.min(count - 1, root.cursor < 0 ? 0 : root.cursor + dy))
+  }
+  function showPage(page) {
+    root.tab = page
+    root.headCol = 0
+  }
+  // Enter on the header: the gear/Back or the switch.
+  function activateHeader() {
+    if (root.headCol === 1) root.setEnabled(!vpn.saved.enabled)
+    else root.showPage(root.tab === "subs" ? "rules" : "subs")
   }
 
   function cursorId() {
@@ -157,6 +170,7 @@ Panel {
       else keyCatcher.forceActiveFocus()
       return
     }
+    if (root.tab === "rules") { root.showPage("subs"); return }
     root.close()
   }
 
@@ -283,7 +297,7 @@ Panel {
     function add(text: string): void { root.addText(text) }
   }
 
-  onOpenedChanged: if (opened) vpn.poll(); else { confirm.opened = false; root.cursor = -1 }
+  onOpenedChanged: if (opened) { root.showPage("subs"); vpn.poll() } else { confirm.opened = false; root.cursor = -1 }
 
   implicitWidth: icon.implicitWidth
   implicitHeight: icon.implicitHeight
@@ -324,10 +338,10 @@ Panel {
       anchors.fill: parent
       blocked: confirm.opened || country.popupOpen || root.editor !== null
       onMoveRequested: function(dx, dy) {
-        if (dx) root.tab = dx < 0 ? "subs" : "rules"
-        else if (root.tab === "subs") { root.moveCursor(dy); subsList.positionViewAtIndex(root.cursor, ListView.Contain) }
+        if (dx) { if (root.cursor === -2) root.headCol = Math.max(0, Math.min(root.tab === "subs" ? 1 : 0, root.headCol + dx)) }
+        else { root.moveCursor(dy); if (root.cursor >= 0) subsList.positionViewAtIndex(root.cursor, ListView.Contain) }
       }
-      onActivateRequested: if (root.cursorId()) root.use(root.cursorId())
+      onActivateRequested: if (root.cursor === -2) root.activateHeader(); else if (root.cursorId()) root.use(root.cursorId())
       onDeleteRequested: root.askRemove(root.cursorId())
       onCloseRequested: root.back()
       onTabRequested: function(direction) { root.switchPanel(direction) }
@@ -365,13 +379,35 @@ Panel {
             font.family: root.fontFamily
             font.pixelSize: Style.font.display
           }
-          trailingControl: Button {
-            text: vpn.saved.enabled ? root.tr("Turn off") : root.tr("Turn on")
-            bordered: true
-            enabled: vpn.apiUp && !root.busy && vpn.saved.subscriptions.length > 0
-            foreground: root.fg
-            fontFamily: root.fontFamily
-            onClicked: root.setEnabled(!vpn.saved.enabled)
+          // Settings (the rules page) and the on/off switch at the right
+          // edge; on the rules page only Back.
+          trailingControl: Row {
+            spacing: Style.space(10)
+            Button {
+              readonly property bool back: root.tab === "rules"
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: back ? "󰁍" : "󰒓"
+              iconSize: Style.font.subtitle * 1.5
+              horizontalPadding: Style.space(5)
+              verticalPadding: Style.space(2)
+              width: Math.max(implicitWidth, implicitHeight)   // square, like an icon button
+              height: width
+              tooltipText: root.tr(back ? "Back" : "Settings")
+              foreground: root.fg
+              fontFamily: root.fontFamily
+              hasCursor: root.cursor === -2 && root.headCol === 0
+              onClicked: { root.cursor = -2; root.headCol = 0; root.activateHeader() }
+            }
+            ToggleSwitch {
+              visible: root.tab === "subs"
+              anchors.verticalCenter: parent.verticalCenter
+              checked: vpn.saved.enabled
+              enabled: vpn.apiUp && !root.busy && vpn.saved.subscriptions.length > 0
+              hasCursor: root.cursor === -2 && root.headCol === 1
+              foreground: root.fg
+              onToggled: { root.cursor = -2; root.headCol = 1; root.activateHeader() }
+              PanelToolTip { visible: parent.containsMouse; text: vpn.saved.enabled ? root.tr("Turn off") : root.tr("Turn on") }
+            }
           }
         }
 
@@ -387,15 +423,6 @@ Panel {
         }
 
         PanelSeparator { foreground: root.fg }
-
-        ButtonGroup {
-          options: [{ value: "subs", label: root.tr("Subscriptions") }, { value: "rules", label: root.tr("Rules") }]
-          value: root.tab
-          focusable: false
-          foreground: root.fg
-          fontFamily: root.fontFamily
-          onChanged: function(value) { root.tab = value }
-        }
 
         // Everything below changes mihomo: off while it is down or busy.
         Column {
