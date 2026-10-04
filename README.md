@@ -4,7 +4,7 @@ An Omarchy shell plugin that runs your VPN through [mihomo](https://github.com/M
 
 - **On/off** — the icon's right click, or the switch at the right of the window header (left click opens the window, a modal in the middle of the screen). Keys in the window: ↑/↓ subscription (↑ from the first one: the header, ←/→ between the gear and the switch), Enter use it, Delete remove it (asks first), Esc back (a click outside closes).
 - **Subscriptions** — add a subscription URL or proxy links (`hy2://`, `vless://`, `trojan://`, … — whatever mihomo parses) from the clipboard or from a QR code on screen. Pick the active subscription by hand; when none of its servers answers, mihomo moves to the next live subscription (`fallback`, checked every minute) and back once yours recovers — the icon's tooltip names the one in use. Inside a subscription mihomo keeps the fastest server (`url-test`) and switches when one dies.
-- **Rules** — behind the gear in the header (Back or Esc returns): a country whose sites go direct (Russia, or none), ad blocking, and your own "always through VPN" / "always direct" domain lists (subdomains included). Private networks (LAN, corporate VPNs, Tailscale) always go direct.
+- **Rules** — behind the gear in the header (Back or Esc returns): a country whose sites go direct (Russia, or none), ad blocking, switching to a working subscription (on by default; off — only the one you picked), and your own "always through VPN" / "always direct" domain lists (subdomains included). Private networks (LAN, corporate VPNs, Tailscale) always go direct.
 
 No logs, server picker or other settings in the UI on purpose.
 

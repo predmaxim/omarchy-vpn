@@ -235,3 +235,9 @@ fs.rmSync(path.dirname(fresh), { recursive: true })
 assert.ok(/slurp <\s*\/dev\/null/.test(fs.readFileSync(__dirname + "/Panel.qml", "utf8")), "Panel.qml: slurp without </dev/null")
 
 console.log("ok")
+
+// Auto switch off: a plain select, the picked subscription only.
+cfg = M.buildConfig(M.patch(cs, { autoSwitch: false }))
+assert.deepStrictEqual(cfg["proxy-groups"][0], { name: "VPN", type: "select", proxies: ["s2", "s1"] })
+assert.strictEqual(M.defaults("").autoSwitch, true)
+console.log("ok autoSwitch")

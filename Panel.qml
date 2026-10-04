@@ -648,6 +648,26 @@ Panel {
               }
             }
 
+            Item {
+              width: parent.width
+              height: autoSwitch.implicitHeight
+              Text {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.tr("Switch to a working subscription")
+                color: root.fg
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+              ToggleSwitch {
+                id: autoSwitch
+                anchors.right: parent.right
+                checked: vpn.saved.autoSwitch
+                foreground: root.fg
+                onToggled: root.commit(function(s) { return Model.patch(s, { autoSwitch: !s.autoSwitch }) }, true, null)
+              }
+            }
+
             PanelSeparator { foreground: root.fg }
 
             // Two rule lists: caption, a borderless field (Enter adds), domains with ✕.
