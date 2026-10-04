@@ -113,7 +113,7 @@ assert.deepStrictEqual(cfg.dns, { enable: true, nameserver: ["system"] })
 assert.deepStrictEqual(cfg["proxy-providers"].s1, { type: "file", path: "./links/s1.txt" })
 assert.deepStrictEqual(cfg["proxy-providers"].s2, { type: "http", url: "https://sub/x", path: "./subs/s2.txt", interval: 7200 })
 // groups are named by id (a subscription named like its server must not clash); active first
-assert.deepStrictEqual(cfg["proxy-groups"][0], { name: "VPN", type: "select", proxies: ["s2", "s1"] })
+assert.deepStrictEqual(cfg["proxy-groups"][0], { name: "VPN", type: "fallback", proxies: ["s2", "s1"], url: "https://www.gstatic.com/generate_204", interval: 60, timeout: 5000 })
 assert.deepStrictEqual(cfg["proxy-groups"][1], { name: "s1", type: "url-test", use: ["s1"], url: M.TEST_URL,
   interval: 300, tolerance: 50, timeout: 5000, "max-failed-times": 3 })
 assert.deepStrictEqual(cfg.rules, [
@@ -129,7 +129,7 @@ cfg = M.buildConfig(M.patch(cs, { country: "", blockAds: false }))
 assert.ok(!cfg.rules.some(r => /GEOSITE|GEOIP|DOMAIN-SUFFIX,ru,/.test(r)))
 // nothing added: VPN group still valid, tun off
 cfg = M.buildConfig(M.patch(M.defaults("k"), { enabled: true }))
-assert.deepStrictEqual(cfg["proxy-groups"], [{ name: "VPN", type: "select", proxies: ["DIRECT"] }])
+assert.deepStrictEqual(cfg["proxy-groups"], [{ name: "VPN", type: "fallback", proxies: ["DIRECT"], url: "https://www.gstatic.com/generate_204", interval: 60, timeout: 5000 }])
 assert.strictEqual(cfg.tun.enable, false)
 
 // files and the writer (runs the real sh script in a temp dir)

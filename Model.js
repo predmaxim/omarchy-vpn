@@ -181,11 +181,13 @@ function buildConfig(state) {
       ? { type: "http", url: s.url, path: "./subs/" + s.id + ".txt", interval: s.interval || 3600 }
       : { type: "file", path: "./links/" + s.id + ".txt" }
   })
-  // The active subscription first: mihomo falls back to the first one when it lost its saved choice.
+  // The active subscription first. fallback: while it answers it's used; when
+  // it doesn't, the next live one in this order, back to it once it recovers.
   var order = subs.map(function(s) { return s.id }).sort(function(a, b) {
     return (b === state.active) - (a === state.active)
   })
-  var groups = [{ name: "VPN", type: "select", proxies: order.length ? order : ["DIRECT"] }]
+  var groups = [{ name: "VPN", type: "fallback", proxies: order.length ? order : ["DIRECT"],
+    url: TEST_URL, interval: 60, timeout: 5000 }]
   subs.forEach(function(s) {
     groups.push({ name: s.id, type: "url-test", use: [s.id], url: TEST_URL,
       interval: 300, tolerance: 50, timeout: 5000, "max-failed-times": 3 })
