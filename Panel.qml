@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls as QQC
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -9,7 +10,7 @@ import "I18n.js" as I18n
 
 // VPN through mihomo (TUN). This widget owns every change: it writes
 // ~/.config/mihomo (state.json, config.yaml, link files) and drives mihomo's
-// API. The panel hangs off the bar icon.
+// API. Its window is a modal in the middle of the screen.
 Panel {
   id: root
   moduleName: "predmaxim.vpn"
@@ -205,7 +206,7 @@ Panel {
     })
   }
 
-  // The panel hides first, or slurp would select over it.
+  // The modal hides first, or slurp would select over it.
   function scanQr() {
     root.close()
     qrDelay.start()
@@ -314,19 +315,41 @@ Panel {
     }
   }
 
-  KeyboardPanel {
-    id: panel
-    anchorItem: icon
-    owner: root
-    bar: root.bar
-    open: root.opened
-    focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(480))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight)
+  // A modal in the middle of the screen, like todo's: a click on the dimmed
+  // screen or Esc closes it.
+  PanelWindow {
+    id: modal
+    screen: root.QsWindow.window ? root.QsWindow.window.screen : null
+    visible: root.opened
+    color: Color.menu.scrim
+    exclusionMode: ExclusionMode.Ignore
+    anchors { top: true; bottom: true; left: true; right: true }
+    WlrLayershell.namespace: "predmaxim-vpn"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    onVisibleChanged: if (visible) Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+
+    MouseArea { anchors.fill: parent; onClicked: root.close() }
+
+    BorderSurface {
+      id: card
+      anchors.centerIn: parent
+      width: Math.min(Style.space(480), modal.width - Style.space(80))
+      height: Math.min(column.implicitHeight + card.contentTopInset + card.contentBottomInset, modal.height * 0.85)
+      color: Color.popups.background
+      borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+      padding: Style.spacing.panelPadding
+      radius: Style.cornerRadius
+
+      MouseArea { anchors.fill: parent }   // clicks on the card stay on it
 
     // What the catcher lets through: the dialog's keys, Delete, and Esc while typing.
     Item {
       anchors.fill: parent
+      anchors.topMargin: card.contentTopInset
+      anchors.rightMargin: card.contentRightInset
+      anchors.bottomMargin: card.contentBottomInset
+      anchors.leftMargin: card.contentLeftInset
       Keys.onPressed: function(event) {
         if (confirm.opened) { if (confirm.handleKey(event)) event.accepted = true; return }
         if (event.key === Qt.Key_Escape && root.editor) { root.back(); event.accepted = true; return }
@@ -696,4 +719,5 @@ Panel {
     }
   }
 }
+  }
 }
