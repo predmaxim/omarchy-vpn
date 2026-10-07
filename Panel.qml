@@ -20,6 +20,10 @@ Panel {
   readonly property color fg: root.bar ? root.bar.barForeground : Color.foreground
   readonly property color muted: Qt.darker(root.fg, 1.4)
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+  // The globe (bar and window header) is orange between states, as
+  // predmaxim.power's charging: the theme has no such role.
+  readonly property bool connecting: Model.isConnecting(vpn.view, root.busy, root.retryAttempt)
+  readonly property color orange: "#e0823d"
 
   // Page: "subs" (main) or "rules" (settings, behind the header gear).
   property string tab: "subs"
@@ -136,8 +140,11 @@ Panel {
   }
 
   // Tests every subscription now: until its first check (a minute) mihomo's
-  // fallback takes a dead subscription for live and stays on it.
+  // fallback takes a dead subscription for live and stays on it. A new
+  // connection starts the retries (and the orange icon) over.
   function probe() {
+    root.retryAttempt = 0
+    retryTimer.stop()
     vpn.call("GET", "/group/VPN/delay?url=" + encodeURIComponent(Model.TEST_URL) + "&timeout=5000", null,
       function() { vpn.poll() })
     vpn.poll()
@@ -316,7 +323,7 @@ Panel {
     bar: root.bar
     text: Model.glyph(vpn.view)
     tooltipText: Model.tooltip(vpn.view, root.tr)
-    foreground: Model.isError(vpn.view) ? Color.urgent : (vpn.view.kind === "on" ? root.fg : root.muted)
+    foreground: root.connecting ? root.orange : Model.isError(vpn.view) ? Color.urgent : (vpn.view.kind === "on" ? root.fg : root.muted)
     onPressed: function(button) {
       if (button === Qt.RightButton && vpn.saved.subscriptions.length) root.setEnabled(!vpn.saved.enabled)
       else root.toggle()
@@ -406,7 +413,7 @@ Panel {
           fontFamily: root.fontFamily
           iconComponent: Text {
             text: Model.glyph(vpn.view)
-            color: Model.isError(vpn.view) ? Color.urgent : root.fg
+            color: root.connecting ? root.orange : Model.isError(vpn.view) ? Color.urgent : root.fg
             font.family: root.fontFamily
             font.pixelSize: Style.font.display
           }
