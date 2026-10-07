@@ -17,7 +17,9 @@ Panel {
   ipcTarget: "predmaxim.vpn"
 
   readonly property var tr: I18n.translator(I18n.textLanguage(function(name) { return Quickshell.env(name) }))
-  readonly property color fg: root.bar ? root.bar.barForeground : Color.foreground
+  // The window's text: the theme's. barForeground (the icon's) follows the
+  // wallpaper on a transparent bar (dark on a light one) while the window stays dark.
+  readonly property color fg: root.bar ? root.bar.foreground : Color.foreground
   readonly property color muted: Qt.darker(root.fg, 1.4)
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
   // The globe (bar and window header) is orange between states, as
@@ -323,7 +325,7 @@ Panel {
     bar: root.bar
     text: Model.glyph(vpn.view)
     tooltipText: Model.tooltip(vpn.view, root.tr)
-    foreground: root.connecting ? root.orange : Model.isError(vpn.view) ? Color.urgent : (vpn.view.kind === "on" ? root.fg : root.muted)
+    foreground: root.connecting ? root.orange : Model.isError(vpn.view) ? Color.urgent : (vpn.view.kind === "on" ? root.barForeground : Qt.darker(root.barForeground, 1.4))
     onPressed: function(button) {
       if (button === Qt.RightButton && vpn.saved.subscriptions.length) root.setEnabled(!vpn.saved.enabled)
       else root.toggle()
