@@ -5,7 +5,7 @@ const src = fs.readFileSync(__dirname + "/Model.js", "utf8").replace(".pragma li
 const M = new Function(src + `; return { defaults, load, randomSecret, clone, patch, idFor, classify, host,
   decodeTitle, splitResponse, urlSubscription, linksSubscription, addSubscription, removeSubscription, useSubscription,
   setEnabled, normalizeDomain, addDomain, removeDomain, buildConfig, files, writerEnv, WRITE_SCRIPT, status, view, isError,
-  glyph, tooltip, retryDelay, TEST_URL, parseState }`)()
+  isConnecting, glyph, tooltip, retryDelay, TEST_URL, parseState }`)()
 
 // state.json: broken or partial files fall back to defaults field by field
 assert.deepStrictEqual(M.load("{broken"), M.defaults(""))
@@ -173,6 +173,15 @@ assert.strictEqual(M.view(cs, Object.assign({}, stt, { tun: false }), true).kind
 assert.strictEqual(M.view(cs, Object.assign({}, stt, { counts: { s2: 0 } }), true).kind, "nosrv")
 assert.strictEqual(M.view(cs, Object.assign({}, stt, { delay: 0 }), true).kind, "dead")
 assert.ok(M.isError({ kind: "dead" }) && M.isError({ kind: "down" }) && M.isError({ kind: "nosrv" }) && !M.isError({ kind: "off" }))
+// orange: a change being applied, a server not tested yet, a dead one while the quick retries run
+assert.ok(M.isConnecting({ kind: "off" }, true, 0))
+assert.ok(M.isConnecting({ kind: "on", delay: -1 }, false, 0))
+assert.ok(!M.isConnecting({ kind: "on", delay: 45 }, false, 0))
+for (const kind of ["dead", "nosrv"]) {
+  assert.ok(M.isConnecting({ kind }, false, 2))
+  assert.ok(!M.isConnecting({ kind }, false, 3))
+}
+for (const kind of ["off", "empty", "down"]) assert.ok(!M.isConnecting({ kind }, false, 0))
 // a globe: on — md-web, off (or nothing to turn on) — md-web_off, error — md-web_cancel
 assert.strictEqual(M.glyph({ kind: "on" }), "\u{F059F}")
 for (const kind of ["off", "empty"]) assert.strictEqual(M.glyph({ kind }), "\u{F0A8E}")

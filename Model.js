@@ -303,6 +303,14 @@ function view(state, st, apiUp) {
 
 function isError(v) { return v.kind === "down" || v.kind === "nosrv" || v.kind === "dead" }
 
+// Between states (an orange icon): a change being applied (busy), the server
+// not tested yet, or no servers / no answer while the quick retries still run.
+function isConnecting(v, busy, attempt) {
+  if (busy) return true
+  if (v.kind === "on") return v.delay < 0
+  return (v.kind === "dead" || v.kind === "nosrv") && attempt < RETRY.length
+}
+
 function glyph(v) { return isError(v) ? GLYPHS.error : (v.kind === "on" ? GLYPHS.on : GLYPHS.off) }
 
 function tooltip(v, tr) {
