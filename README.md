@@ -8,6 +8,8 @@ An Omarchy shell plugin that runs your VPN through [mihomo](https://github.com/M
 
 No logs, server picker or other settings in the UI on purpose.
 
+![The VPN window: on, three subscriptions, add from clipboard or QR](preview.png)
+
 ## Install
 
 Requirements: `mihomo-bin` (AUR), `slurp`, `grim`, `zbar`, `wl-clipboard`, `curl` ≥ 8.3, `libnotify`.
