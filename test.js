@@ -108,7 +108,9 @@ cs = M.addDomain(cs, "directDomains", "github.com").state
 let cfg = M.buildConfig(cs)
 assert.strictEqual(cfg["external-controller"], "127.0.0.1:9097")
 assert.strictEqual(cfg.secret, "sec")
-assert.deepStrictEqual(cfg.tun, { enable: true, stack: "gvisor", "auto-route": true, "auto-detect-interface": true, "dns-hijack": ["any:53"] })
+const PRIV = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16"]
+assert.deepStrictEqual(cfg.tun, { enable: true, stack: "gvisor", "auto-route": true, "auto-detect-interface": true, "dns-hijack": ["any:53"],
+  "route-exclude-address": ["@country-cidrs"].concat(PRIV), "exclude-src-port": [51413] })
 assert.deepStrictEqual(cfg.dns, { enable: true, nameserver: ["system"] })
 assert.deepStrictEqual(cfg["proxy-providers"].s1, { type: "file", path: "./links/s1.txt" })
 assert.deepStrictEqual(cfg["proxy-providers"].s2, { type: "http", url: "https://sub/x", path: "./subs/s2.txt", interval: 7200 })
@@ -117,16 +119,21 @@ assert.deepStrictEqual(cfg["proxy-groups"][0], { name: "VPN", type: "fallback", 
 assert.deepStrictEqual(cfg["proxy-groups"][1], { name: "s1", type: "url-test", use: ["s1"], url: M.TEST_URL,
   interval: 300, tolerance: 50, timeout: 5000, "max-failed-times": 3 })
 assert.deepStrictEqual(cfg.rules, [
+  "PROCESS-NAME,transmission-qt,DIRECT", "PROCESS-NAME,transmission-gtk,DIRECT", "PROCESS-NAME,transmission-daemon,DIRECT",
+  "PROCESS-NAME,qbittorrent,DIRECT", "PROCESS-NAME,qbittorrent-nox,DIRECT",
   "DOMAIN-SUFFIX,kinopoisk.ru,VPN", "DOMAIN-SUFFIX,github.com,DIRECT",
   "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve", "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
   "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve", "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
-  "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve",
+  "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve", "IP-CIDR,169.254.0.0/16,DIRECT,no-resolve",
   "GEOSITE,category-ads-all,REJECT",
   "DOMAIN-SUFFIX,ru,DIRECT", "DOMAIN-SUFFIX,su,DIRECT", "DOMAIN-SUFFIX,xn--p1ai,DIRECT",
   "GEOSITE,category-ru,DIRECT", "GEOIP,RU,DIRECT",
   "MATCH,VPN"])
 cfg = M.buildConfig(M.patch(cs, { country: "", blockAds: false }))
 assert.ok(!cfg.rules.some(r => /GEOSITE|GEOIP|DOMAIN-SUFFIX,ru,/.test(r)))
+// no country: no networks to splice, nothing to download
+assert.deepStrictEqual(cfg.tun["route-exclude-address"], PRIV)
+assert.strictEqual(M.writerEnv(M.patch(cs, { country: "" })).CIDRS_URL, "")
 // nothing added: VPN group still valid, tun off
 cfg = M.buildConfig(M.patch(M.defaults("k"), { enabled: true }))
 assert.deepStrictEqual(cfg["proxy-groups"], [{ name: "VPN", type: "fallback", proxies: ["DIRECT"], url: "https://www.gstatic.com/generate_204", interval: 60, timeout: 5000 }])
@@ -141,12 +148,18 @@ const os = require("os"), path = require("path"), cp = require("child_process")
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vpn-"))
 fs.mkdirSync(dir + "/links"); fs.writeFileSync(dir + "/links/old.txt", "x")
 fs.mkdirSync(dir + "/subs"); fs.writeFileSync(dir + "/subs/s2.txt", "cache"); fs.writeFileSync(dir + "/subs/gone.txt", "secret")
+// a fresh copy of the country's networks: no download. IPv6 and junk lines are dropped;
+// no newline at the end, as in the real list
+fs.writeFileSync(dir + "/cidrs-ru.txt", "2.56.88.0/22\r\n2a00:1fa0::/29\n\";rm -rf ~\n5.3.0.0/16")
 cp.execFileSync("sh", ["-c", M.WRITE_SCRIPT, "sh", dir], { env: Object.assign({}, process.env, M.writerEnv(cs)) })
 assert.strictEqual(fs.readFileSync(dir + "/links/s1.txt", "utf8"), fl[2].data)
 assert.ok(!fs.existsSync(dir + "/links/old.txt"))
 assert.ok(fs.existsSync(dir + "/subs/s2.txt"))
 assert.ok(!fs.existsSync(dir + "/subs/gone.txt"))
-assert.deepStrictEqual(JSON.parse(fs.readFileSync(dir + "/config.yaml", "utf8")), M.buildConfig(cs))
+const want = M.buildConfig(cs)
+want.tun["route-exclude-address"] = ["5.3.0.0/16"].concat(PRIV)
+assert.deepStrictEqual(JSON.parse(fs.readFileSync(dir + "/config.yaml", "utf8")), want)
+assert.ok(!fs.existsSync(dir + "/config.yaml.tmp"))
 assert.strictEqual(fs.statSync(dir + "/state.json").mode & 0o777, 0o600)
 fs.rmSync(dir, { recursive: true })
 
@@ -221,16 +234,20 @@ assert.strictEqual(M.parseState('{"secret":"x"}').broken, false)
 
 // the writer on a fresh machine: ~/.config/mihomo does not exist yet
 const fresh = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "vpn-")), "mihomo")
-cp.execFileSync("sh", ["-c", M.WRITE_SCRIPT, "sh", fresh], { env: Object.assign({}, process.env, M.writerEnv(cs)) })
+// a failed download (here: no such file) leaves no copy; the country still goes direct by rules
+const noNet = Object.assign({}, process.env, M.writerEnv(cs), { CIDRS_URL: "file:///nonexistent" })
+cp.execFileSync("sh", ["-c", M.WRITE_SCRIPT, "sh", fresh], { env: noNet, stdio: "ignore" })
+assert.ok(!fs.existsSync(fresh + "/cidrs-ru.txt") && !fs.existsSync(fresh + "/cidrs-ru.txt.tmp"))
+assert.deepStrictEqual(JSON.parse(fs.readFileSync(fresh + "/config.yaml", "utf8")).tun["route-exclude-address"], PRIV)
 assert.deepStrictEqual(JSON.parse(fs.readFileSync(fresh + "/state.json", "utf8")), cs)
 // first run (FIRST_RUN=1) never replaces an existing state.json — another widget (one per monitor) got there first
 const other = M.patch(cs, { secret: "other" })
-cp.execFileSync("sh", ["-c", M.WRITE_SCRIPT, "sh", fresh], { env: Object.assign({}, process.env, M.writerEnv(other), { FIRST_RUN: "1" }) })
+cp.execFileSync("sh", ["-c", M.WRITE_SCRIPT, "sh", fresh], { env: Object.assign({}, process.env, M.writerEnv(other), { FIRST_RUN: "1", CIDRS_URL: noNet.CIDRS_URL }) })
 assert.strictEqual(JSON.parse(fs.readFileSync(fresh + "/state.json", "utf8")).secret, "sec")
 assert.strictEqual(JSON.parse(fs.readFileSync(fresh + "/config.yaml", "utf8")).secret, "sec")
 // writers take turns: one waits while another holds the lock, then writes and releases it
 fs.mkdirSync(fresh + "/.lock")
-const waiting = cp.spawn("sh", ["-c", M.WRITE_SCRIPT, "sh", fresh], { env: Object.assign({}, process.env, M.writerEnv(other)) })
+const waiting = cp.spawn("sh", ["-c", M.WRITE_SCRIPT, "sh", fresh], { env: Object.assign({}, process.env, M.writerEnv(other), { CIDRS_URL: noNet.CIDRS_URL }), stdio: "ignore" })
 cp.execFileSync("sleep", ["0.5"])
 assert.strictEqual(JSON.parse(fs.readFileSync(fresh + "/state.json", "utf8")).secret, "sec")
 fs.rmdirSync(fresh + "/.lock")

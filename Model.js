@@ -6,15 +6,25 @@ var TEST_URL = "https://www.gstatic.com/generate_204"
 // A globe: on — md-web, off — md-web_off, error — md-web_cancel (also red).
 var GLYPHS = { on: "\u{F059F}", off: "\u{F0A8E}", error: "\u{F1790}" }
 // Sites of a country go direct: its TLDs, mihomo's geosite list, its GeoIP code.
-var COUNTRIES = { ru: { suffixes: ["ru", "su", "xn--p1ai"], geosite: "category-ru", geoip: "RU" } }
-// Never through the tunnel: LAN, corporate VPNs, Tailscale, loopback.
-var PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "127.0.0.0/8"]
+// cidrs: its IPv4 networks, kept out of TUN by the kernel, so their traffic
+// never reaches mihomo (gVisor costs CPU even for DIRECT).
+var COUNTRIES = { ru: { suffixes: ["ru", "su", "xn--p1ai"], geosite: "category-ru", geoip: "RU",
+  cidrs: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/ru.list" } }
+// Where the writer puts the country's networks in tun.route-exclude-address:
+// the list (~13k lines) is too big to pass through the environment.
+var CIDRS_MARK = "@country-cidrs"
+// Never through the tunnel: LAN, corporate VPNs, Tailscale, loopback, link-local.
+var PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16"]
 var RETRY = [5000, 15000, 60000]
 var RETRY_LAST = 300000
 
 function defaults(secret) {
   return { version: 1, secret: secret || "", port: 9097, enabled: false, active: "",
-    subscriptions: [], country: "ru", blockAds: true, autoSwitch: true, proxyDomains: [], directDomains: [] }
+    subscriptions: [], country: "ru", blockAds: true, autoSwitch: true, proxyDomains: [], directDomains: [],
+    // Bypass VPN. Ports: packets from them are kept out of TUN by the kernel.
+    // Apps: DIRECT by process name in mihomo. Default — torrent clients.
+    directPorts: [51413],
+    directApps: ["transmission-qt", "transmission-gtk", "transmission-daemon", "qbittorrent", "qbittorrent-nox"] }
 }
 
 // state.json text -> { state, broken }. Missing fields take their defaults.
@@ -187,6 +197,7 @@ function buildConfig(state) {
     return (b === state.active) - (a === state.active)
   })
   var proxies = order.length ? order : ["DIRECT"]
+  var country = COUNTRIES[state.country]
   var groups = [state.autoSwitch
     ? { name: "VPN", type: "fallback", proxies: proxies, url: TEST_URL, interval: 60, timeout: 5000 }
     : { name: "VPN", type: "select", proxies: proxies }]
@@ -194,12 +205,11 @@ function buildConfig(state) {
     groups.push({ name: s.id, type: "url-test", use: [s.id], url: TEST_URL,
       interval: 300, tolerance: 50, timeout: 5000, "max-failed-times": 3 })
   })
-  var rules = []
+  var rules = state.directApps.map(function(a) { return "PROCESS-NAME," + a + ",DIRECT" })
   state.proxyDomains.forEach(function(d) { rules.push("DOMAIN-SUFFIX," + d + ",VPN") })
   state.directDomains.forEach(function(d) { rules.push("DOMAIN-SUFFIX," + d + ",DIRECT") })
   PRIVATE.forEach(function(c) { rules.push("IP-CIDR," + c + ",DIRECT,no-resolve") })
   if (state.blockAds) rules.push("GEOSITE,category-ads-all,REJECT")
-  var country = COUNTRIES[state.country]
   if (country) {
     country.suffixes.forEach(function(t) { rules.push("DOMAIN-SUFFIX," + t + ",DIRECT") })
     rules.push("GEOSITE," + country.geosite + ",DIRECT", "GEOIP," + country.geoip + ",DIRECT")
@@ -214,7 +224,8 @@ function buildConfig(state) {
     "profile": { "store-selected": true },
     "dns": { "enable": true, "nameserver": ["system"] },
     "tun": { "enable": !!state.enabled && subs.length > 0, "stack": "gvisor", "auto-route": true,
-      "auto-detect-interface": true, "dns-hijack": ["any:53"] },
+      "auto-detect-interface": true, "dns-hijack": ["any:53"],
+      "route-exclude-address": (country ? [CIDRS_MARK] : []).concat(PRIVATE), "exclude-src-port": state.directPorts },
     "proxy-providers": providers,
     "proxy-groups": groups,
     "rules": rules
@@ -240,6 +251,8 @@ function writerEnv(state) {
   var list = files(state)
   var env = {
     FILE_COUNT: String(list.length),
+    CIDRS_URL: COUNTRIES[state.country] ? COUNTRIES[state.country].cidrs : "",
+    CIDRS_FILE: "cidrs-" + state.country + ".txt",
     KEEP_SUBS: state.subscriptions.filter(function(s) { return s.kind === "url" })
       .map(function(s) { return s.id + ".txt" }).join(" ")
   }
@@ -249,6 +262,9 @@ function writerEnv(state) {
 
 // sh -c WRITE_SCRIPT sh <dir>: writes every file (via .tmp + mv), drops link
 // files of removed subscriptions and caches of removed URL subscriptions.
+// Downloads the country's networks when the copy is missing or a week old (a
+// failed download keeps the old copy) and puts its IPv4 lines in place of
+// CIDRS_MARK; without a copy the country still goes direct by mihomo's rules.
 // Creates <dir> on a fresh machine. Writers take turns through a .lock dir
 // (there is one widget per monitor); a lock left by a killed writer is broken
 // after 5 s. With FIRST_RUN set it writes nothing if state.json exists:
@@ -269,7 +285,14 @@ var WRITE_SCRIPT = [
   '  eval "p=\\$FILE_${i}_PATH; d=\\$FILE_${i}_DATA"',
   '  printf "%s" "$d" > "$p.tmp" && mv "$p.tmp" "$p" || exit 1',
   '  i=$((i + 1))',
-  'done'
+  'done',
+  'if [ -n "$CIDRS_URL" ] && [ -z "$(find "$CIDRS_FILE" -mtime -7 2>/dev/null)" ]; then',
+  '  curl -fsSL --max-time 20 -o "$CIDRS_FILE.tmp" "$CIDRS_URL" && mv "$CIDRS_FILE.tmp" "$CIDRS_FILE"; rm -f "$CIDRS_FILE.tmp"',
+  'fi',
+  // The list has no newline at its end: the separator brings its own.
+  '{ cat "$CIDRS_FILE" 2>/dev/null; printf "\\n@@end\\n"; cat config.yaml; } | awk \'',
+  '  !e { if ($0 == "@@end") e = 1; else if ($0 ~ /^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+\\/[0-9]+$/) c = c "      \\"" $0 "\\",\\n"; next }',
+  '  /"' + CIDRS_MARK + '",$/ { printf "%s", c; next } { print }\' > config.yaml.tmp && mv config.yaml.tmp config.yaml || exit 1'
 ].join("\n")
 
 // GET /configs, /proxies and /providers/proxies -> what the icon needs.

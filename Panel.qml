@@ -49,9 +49,9 @@ Panel {
     Quickshell.execDetached(["omarchy-notification-send", "--app-name", "VPN", "-u", "normal", "-i", root.notifyIcon, summary, body || ""])
   }
 
-  // Applies change(saved) -> next: writes its files; with `reload`, mihomo
-  // then re-reads its config, and a rejected config rolls back. `after` runs
-  // once everything went through. A change arriving while another is written
+  // Applies change(saved) -> next: writes its files; with `reload`, mihomo is
+  // restarted on them, and a config it does not come up with rolls back. `after`
+  // runs once everything went through. A change arriving while another is written
   // waits its turn and is computed from the state at its turn, so it never
   // undoes the one before. A broken state.json is never written over: it holds
   // the only copy of the subscription keys. options: { rollback, firstRun }.
@@ -79,15 +79,33 @@ Panel {
     if (p.options.firstRun) vpn.reread(); else vpn.saved = p.next
     if (!p.reload || !vpn.apiUp) { root.done(); if (p.after) p.after(); return }
     vpn.quiet = true
-    vpn.call("PUT", "/configs?force=true", { path: vpn.dir + "/config.yaml" }, function(ok, data) {
+    restarter.running = true
+  }
+
+  // A restart, not PUT /configs: a hot reload of the TUN at times leaves mihomo
+  // unable to reach anything, direct or VPN, until the service restarts.
+  function restarted(code) {
+    if (code !== 0) { vpn.quiet = false; root.notify(root.tr("Could not restart the VPN service"), ""); root.done(); return }
+    var p = root.pending
+    root.waitUp(20, !!p.next.enabled && p.next.subscriptions.length > 0, function(up) {
       vpn.quiet = false
-      if (ok) { root.done(); if (p.after) p.after(); root.probe(); return }
-      root.notify(root.tr("mihomo rejected the configuration"), data && data.message ? data.message : "")
+      if (up) { root.done(); if (p.after) p.after(); root.probe(); return }
+      root.notify(root.tr("VPN did not start with the new settings"), root.tr("Going back to the previous ones"))
       root.busy = false
       root.pending = null
       // The rollback goes before anything queued.
       if (!p.options.rollback) root.commit(function() { return p.prev }, true, null, { rollback: true })
       else root.done()
+    })
+  }
+
+  // Within `tries` seconds the API answers and, with `tun`, TUN is up -> done(true).
+  // The API comes up about a second before TUN: asking once would see it off.
+  function waitUp(tries, tun, done) {
+    vpn.call("GET", "/configs", null, function(ok, configs) {
+      if (ok && (!tun || (configs && configs.tun && configs.tun.enable))) done(true)
+      else if (tries <= 1) done(false)
+      else root.later(1000, function() { root.waitUp(tries - 1, tun, done) })
     })
   }
 
@@ -260,6 +278,13 @@ Panel {
     onMissingChanged: if (missing) root.commit(function() { return Model.defaults(Model.randomSecret(Math.random)) }, false, null, { firstRun: true })
     // An empty secret would leave mihomo's API open to any local process: make one.
     onLoadedFile: if (!vpn.broken && !vpn.saved.secret) root.commit(function(s) { return Model.patch(s, { secret: Model.randomSecret(Math.random) }) }, true, null)
+  }
+
+  // polkit lets the user restart only their own mihomo@ unit (systemd/50-mihomo-restart.rules).
+  Process {
+    id: restarter
+    command: ["systemctl", "--no-ask-password", "restart", "mihomo@" + Quickshell.env("USER") + ".service"]
+    onExited: function(code) { root.restarted(code) }
   }
 
   Process {
