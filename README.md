@@ -11,7 +11,7 @@ An Omarchy shell plugin that runs your VPN through [mihomo](https://github.com/M
 
 No logs, server picker (beyond locations) or other settings in the UI on purpose.
 
-![The VPN window: on, three subscriptions, add from clipboard or QR](preview.png)
+![The VPN window: on, three subscriptions (one with locations, on Auto), add from clipboard or QR](preview.png)
 
 ## Install
 
