@@ -364,4 +364,14 @@ assert.deepStrictEqual(JSON.parse(fs.readFileSync(xdir + "/state.json", "utf8"))
 assert.deepStrictEqual(fs.readdirSync(xdir + "/xray").sort(), [xsub.id + ".json", "sx2.json"])
 assert.strictEqual(fs.statSync(xdir + "/xray/sx2.json").mode & 0o777, 0o600)
 fs.rmSync(xdir, { recursive: true })
+// Auto skips a location of the country that goes direct anyway: it exits there, blocked sites stay blocked
+const home = M.addSubscription(M.defaults("sec"), M.urlSubscription("https://h/x", "HTTP/1.1 200 OK\n\n" + JSON.stringify(
+  [{ remarks: "🇩🇪 Germany", outbounds: [vless("a", "1.1.1.1")] }, { remarks: "🇷🇺 Россия · Госуслуги", outbounds: [vless("b", "2.2.2.2")] }]))).state
+const hid = home.subscriptions[0].id
+const hnames = st => JSON.parse(M.files(st).find(f => f.path === "links/" + hid + ".txt").data).proxies.map(p => p.name)
+assert.deepStrictEqual(hnames(home), ["🇩🇪 Germany"])
+assert.deepStrictEqual(hnames(M.patch(home, { country: "" })), ["🇩🇪 Germany", "🇷🇺 Россия · Госуслуги"])
+assert.deepStrictEqual(hnames(X.setLocation(home, hid, "🇷🇺 Россия · Госуслуги")), ["🇷🇺 Россия · Госуслуги"])
+// Xray still runs it: picking it restarts nothing
+assert.strictEqual(X.xrayConfig(home.subscriptions[0], "s").inbounds.length, 2)
 console.log("ok xray")

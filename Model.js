@@ -227,6 +227,15 @@ function nextLocation(sub, step) {
   return names[((i + step) % names.length + names.length) % names.length]
 }
 
+// A location of the country whose sites go direct anyway (its flag in front:
+// "🇷🇺 Россия · …" with country "ru") exits there, so blocked sites stay blocked
+// through it — and it is the closest, the fastest: Auto skips it. By hand it can be picked.
+function isHomeLocation(name, country) {
+  if (!COUNTRIES[country]) return false
+  var flag = String.fromCodePoint(0x1F1E6 + country.charCodeAt(0) - 97, 0x1F1E6 + country.charCodeAt(1) - 97)
+  return String(name).indexOf(flag) === 0
+}
+
 // A fresh download: its servers; the picked location stays while it is there, else any.
 function setLocations(state, id, locations) {
   var next = clone(state)
@@ -373,7 +382,7 @@ function files(state) {
       out.push({ path: "xray/" + s.id + ".json", data: JSON.stringify(xrayConfig(s, state.secret), null, 2) + "\n" })
       var proxies = s.locations.map(function(l, i) {
         return { name: l.name, type: "socks5", server: "127.0.0.1", port: s.port + i, username: "vpn", password: state.secret, udp: true }
-      }).filter(function(p) { return !locationOf(s) || p.name === s.location })
+      }).filter(function(p) { return locationOf(s) ? p.name === s.location : !isHomeLocation(p.name, state.country) })
       out.push({ path: "links/" + s.id + ".txt", data: JSON.stringify({ proxies: proxies }) + "\n" })
     }
   })
