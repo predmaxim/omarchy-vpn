@@ -15,6 +15,13 @@ var COUNTRIES = { ru: { suffixes: ["ru", "su", "xn--p1ai"], geosite: "category-r
 var CIDRS_MARK = "@country-cidrs"
 // Never through the tunnel: LAN, corporate VPNs, Tailscale, loopback, link-local.
 var PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16"]
+// SOCKS ports of Xray on localhost: a block per xray subscription, a port per location.
+// shortcut: up to XRAY_BLOCK locations a subscription; widen the block if one has more.
+var XRAY_PORT = 17900
+var XRAY_BLOCK = 100
+// Data reaches the writer through environment variables, up to 128 KiB each:
+// a file goes in parts of this many UTF-16 units (≤ 3 bytes apiece in UTF-8).
+var PART = 32768
 var RETRY = [5000, 15000, 60000]
 var RETRY_LAST = 300000
 
@@ -86,8 +93,9 @@ function decodeTitle(value) {
   value = String(value || "").trim()
   if (value.indexOf("base64:") !== 0) return value
   try {
-    var raw = typeof atob === "function" ? atob(value.slice(7)) : Qt.atob(value.slice(7))
-    return decodeURIComponent(escape(raw)).trim()
+    // Qt.atob (QML) already decodes the UTF-8; atob (node) gives its bytes.
+    if (typeof atob !== "function") return Qt.atob(value.slice(7)).trim()
+    return decodeURIComponent(escape(atob(value.slice(7)))).trim()
   } catch (e) {
     return ""
   }
@@ -113,11 +121,121 @@ function field(response, name) {
   return m ? m[1].trim() : ""
 }
 
+// A subscription that answers with Xray JSON is kind "xray": mihomo can't use
+// its servers (their REALITY lets in Xray clients only), so Xray runs its
+// locations and mihomo goes through them (xrayConfig, files). location: the
+// picked one's name, "" — any, the fastest that answers.
 function urlSubscription(url, raw) {
   var response = splitResponse(raw)
   var hours = parseInt(field(response, "profile-update-interval"), 10)
-  return { id: idFor(url), name: decodeTitle(field(response, "profile-title")) || host(url), kind: "url", url: url,
+  var sub = { id: idFor(url), name: decodeTitle(field(response, "profile-title")) || host(url), kind: "url", url: url,
     interval: hours > 0 ? hours * 3600 : 3600 }
+  var locations = xrayLocations(response.body)
+  if (locations) { sub.kind = "xray"; sub.locations = locations; sub.location = "" }
+  return sub
+}
+
+// Xray JSON — a JSON array of whole Xray configs, one per location (remarks) —
+// -> [{ name, outbounds, rule, balancers, observatory }]; null if body is not that.
+// Kept: the servers and how the config picks one for the rest of the traffic —
+// its last rule without conditions, with its balancer. Its other rules (sites
+// that go direct) are dropped: what goes through the VPN is mihomo's to decide.
+function xrayLocations(body) {
+  var list = null
+  try { list = JSON.parse(body) } catch (e) {}
+  if (!Array.isArray(list) || !list.length || !list.every(function(p) { return p && Array.isArray(p.outbounds) })) return null
+  var out = []
+  list.forEach(function(profile, i) {
+    var rules = (profile.routing || {}).rules || []
+    var rule = rules.filter(function(r) {
+      return (r.balancerTag || r.outboundTag) && Object.keys(r).every(function(k) {
+        return ["type", "network", "ruleTag", "balancerTag", "outboundTag"].indexOf(k) >= 0 })
+    }).pop()
+    var target = rule ? (rule.balancerTag ? { balancerTag: rule.balancerTag } : { outboundTag: rule.outboundTag }) : null
+    // The name is the dropdown's value: it must be unique.
+    var name = String(profile.remarks || "").trim() || String(i + 1)
+    if (out.some(function(l) { return l.name === name })) name += " " + (i + 1)
+    out.push({ name: name, outbounds: profile.outbounds, rule: target,
+      balancers: ((profile.routing || {}).balancers || []).filter(function(b) { return target && b.tag === target.balancerTag }),
+      observatory: profile.burstObservatory || null })
+  })
+  return out
+}
+
+// Xray's config for an xray subscription: every location behind a SOCKS port
+// of its own on localhost (sub.port + its index), the API secret the password.
+// Tags get the location's index in front: locations reuse them ("direct", …).
+// shortcut: tags that outbounds point at (proxySettings, dialerProxy) keep no
+// prefix — none of the known subscriptions use them; prefix them if one does.
+function xrayConfig(sub, secret) {
+  var cfg = { log: { loglevel: "warning" }, inbounds: [], outbounds: [], routing: { rules: [], balancers: [] } }
+  var watch = null
+  sub.locations.forEach(function(loc, i) {
+    function tag(t) { return i + "-" + t }
+    cfg.inbounds.push({ tag: tag("in"), listen: "127.0.0.1", port: sub.port + i, protocol: "socks",
+      settings: { auth: "password", accounts: [{ user: "vpn", pass: secret }], udp: true } })
+    loc.outbounds.forEach(function(o, j) { cfg.outbounds.push(Object.assign({}, o, { tag: tag(o.tag || "o" + j) })) })
+    // No rule of its own: Xray's way — the location's first outbound.
+    var target = !loc.rule ? { outboundTag: tag(loc.outbounds[0].tag || "o0") }
+      : loc.rule.balancerTag ? { balancerTag: tag(loc.rule.balancerTag) } : { outboundTag: tag(loc.rule.outboundTag) }
+    cfg.routing.rules.push(Object.assign({ type: "field", inboundTag: [tag("in")] }, target))
+    loc.balancers.forEach(function(b) {
+      var nb = Object.assign({}, b, { tag: tag(b.tag), selector: (b.selector || []).map(tag) })
+      if (b.fallbackTag) nb.fallbackTag = tag(b.fallbackTag)
+      cfg.routing.balancers.push(nb)
+    })
+    // One observatory for all: the first location's settings, everyone's servers.
+    if (loc.observatory) {
+      watch = watch || Object.assign({}, loc.observatory, { subjectSelector: [] })
+      watch.subjectSelector = watch.subjectSelector.concat((loc.observatory.subjectSelector || []).map(tag))
+    }
+  })
+  if (watch) cfg.burstObservatory = watch
+  return cfg
+}
+
+// Xray of each xray subscription is the user unit mihomo-xray@<id>: restart
+// those whose config changed (or that are new), stop the removed ones.
+function xrayChanges(prev, next) {
+  var before = {}
+  prev.subscriptions.forEach(function(s) { if (s.kind === "xray") before[s.id] = JSON.stringify(xrayConfig(s, prev.secret)) })
+  var restart = next.subscriptions.filter(function(s) {
+    return s.kind === "xray" && before[s.id] !== JSON.stringify(xrayConfig(s, next.secret)) }).map(function(s) { return s.id })
+  var stop = Object.keys(before).filter(function(id) { return !next.subscriptions.some(function(s) { return s.id === id }) })
+  return { restart: restart, stop: stop }
+}
+
+// The picked location of an xray subscription; null — any (or it's gone).
+function locationOf(sub) {
+  return (sub.locations || []).filter(function(l) { return l.name === sub.location })[0] || null
+}
+
+// name: a location's, or "" — any. The same state back when nothing changes
+// (unknown subscription or location, already picked).
+function setLocation(state, id, name) {
+  var sub = state.subscriptions.filter(function(s) { return s.id === id })[0]
+  if (!sub || !sub.locations || sub.location === name || (name && !sub.locations.some(function(l) { return l.name === name }))) return state
+  var next = clone(state)
+  next.subscriptions.forEach(function(s) { if (s.id === id) s.location = name })
+  return next
+}
+
+// ←/→ on a subscription row: "any", then the locations, round.
+function nextLocation(sub, step) {
+  var names = [""].concat((sub.locations || []).map(function(l) { return l.name }))
+  var i = Math.max(0, names.indexOf(sub.location))
+  return names[((i + step) % names.length + names.length) % names.length]
+}
+
+// A fresh download: its servers; the picked location stays while it is there, else any.
+function setLocations(state, id, locations) {
+  var next = clone(state)
+  next.subscriptions.forEach(function(s) {
+    if (s.id !== id) return
+    s.locations = locations
+    s.location = (locationOf(s) || { name: "" }).name
+  })
+  return next
 }
 
 function linksSubscription(links) {
@@ -134,6 +252,9 @@ function addSubscription(state, sub) {
   for (var i = 0; i < state.subscriptions.length; i++)
     if (state.subscriptions[i].id === sub.id) return { state: state, error: "exists" }
   var next = clone(state)
+  sub = clone(sub)
+  // Xray's first SOCKS port: the next block of XRAY_BLOCK after those taken.
+  if (sub.kind === "xray") sub.port = XRAY_BLOCK + Math.max.apply(null, [XRAY_PORT - XRAY_BLOCK].concat(state.subscriptions.map(function(s) { return s.port || 0 })))
   next.subscriptions.push(sub)
   if (!next.active) next.active = sub.id
   return { state: next, error: "" }
@@ -202,10 +323,14 @@ function buildConfig(state) {
     ? { name: "VPN", type: "fallback", proxies: proxies, url: TEST_URL, interval: 60, timeout: 5000 }
     : { name: "VPN", type: "select", proxies: proxies }]
   subs.forEach(function(s) {
-    groups.push({ name: s.id, type: "url-test", use: [s.id], url: TEST_URL,
+    // Not lazy: tested on their interval even while unused, so the fallback
+    // finds the fastest server (location) already measured.
+    groups.push({ name: s.id, type: "url-test", use: [s.id], url: TEST_URL, lazy: false,
       interval: 300, tolerance: 50, timeout: 5000, "max-failed-times": 3 })
   })
   var rules = state.directApps.map(function(a) { return "PROCESS-NAME," + a + ",DIRECT" })
+  // Xray's own traffic to its servers comes back through TUN: out it goes, or it loops.
+  if (subs.some(function(s) { return s.kind === "xray" })) rules.unshift("PROCESS-NAME,xray,DIRECT")
   state.proxyDomains.forEach(function(d) { rules.push("DOMAIN-SUFFIX," + d + ",VPN") })
   state.directDomains.forEach(function(d) { rules.push("DOMAIN-SUFFIX," + d + ",DIRECT") })
   PRIVATE.forEach(function(c) { rules.push("IP-CIDR," + c + ",DIRECT,no-resolve") })
@@ -241,12 +366,23 @@ function files(state) {
   ]
   state.subscriptions.forEach(function(s) {
     if (s.kind === "links") out.push({ path: "links/" + s.id + ".txt", data: s.links + "\n" })
+    // mihomo sees each location as a SOCKS server named after it — all of them
+    // (url-test keeps the fastest that answers) or the picked one. Provider
+    // format; JSON is YAML too.
+    if (s.kind === "xray") {
+      out.push({ path: "xray/" + s.id + ".json", data: JSON.stringify(xrayConfig(s, state.secret), null, 2) + "\n" })
+      var proxies = s.locations.map(function(l, i) {
+        return { name: l.name, type: "socks5", server: "127.0.0.1", port: s.port + i, username: "vpn", password: state.secret, udp: true }
+      }).filter(function(p) { return !locationOf(s) || p.name === s.location })
+      out.push({ path: "links/" + s.id + ".txt", data: JSON.stringify({ proxies: proxies }) + "\n" })
+    }
   })
   return out
 }
 
 // Files reach the writer through its environment, not argv: argv is readable
-// by every user (/proc/<pid>/cmdline), the environment only by its owner.
+// by every user (/proc/<pid>/cmdline), the environment only by its owner. Each
+// in PART-sized pieces: state.json with an xray subscription runs to ~80 KB.
 function writerEnv(state) {
   var list = files(state)
   var env = {
@@ -256,12 +392,24 @@ function writerEnv(state) {
     KEEP_SUBS: state.subscriptions.filter(function(s) { return s.kind === "url" })
       .map(function(s) { return s.id + ".txt" }).join(" ")
   }
-  list.forEach(function(f, i) { env["FILE_" + i + "_PATH"] = f.path; env["FILE_" + i + "_DATA"] = f.data })
+  list.forEach(function(f, i) {
+    env["FILE_" + i + "_PATH"] = f.path
+    var parts = 0
+    for (var at = 0; at < f.data.length || !parts; parts++) {
+      var end = at + PART
+      // Never between the halves of a surrogate pair (emoji): each part must be valid text.
+      if (/[\uD800-\uDBFF]/.test(f.data.charAt(end - 1))) end--
+      env["FILE_" + i + "_DATA_" + parts] = f.data.slice(at, end)
+      at = end
+    }
+    env["FILE_" + i + "_PARTS"] = String(parts)
+  })
   return env
 }
 
-// sh -c WRITE_SCRIPT sh <dir>: writes every file (via .tmp + mv), drops link
-// files of removed subscriptions and caches of removed URL subscriptions.
+// sh -c WRITE_SCRIPT sh <dir>: writes every file (its parts, via .tmp + mv),
+// drops link files and Xray configs of removed subscriptions and caches of
+// removed URL subscriptions.
 // Downloads the country's networks when the copy is missing or a week old (a
 // failed download keeps the old copy) and puts its IPv4 lines in place of
 // CIDRS_MARK; without a copy the country still goes direct by mihomo's rules.
@@ -277,13 +425,16 @@ var WRITE_SCRIPT = [
   "trap 'rmdir .lock' EXIT",
   'trap "exit 1" INT TERM',
   '[ -n "$FIRST_RUN" ] && [ -e state.json ] && exit 0',
-  'mkdir -p links subs || exit 1',
-  'rm -f links/*.txt',
+  'mkdir -p links subs xray || exit 1',
+  'rm -f links/*.txt xray/*.json',
   'for f in subs/*.txt; do [ -e "$f" ] || continue; case " $KEEP_SUBS " in *" ${f#subs/} "*) ;; *) rm -f "$f" ;; esac; done',
   'i=0',
   'while [ "$i" -lt "$FILE_COUNT" ]; do',
-  '  eval "p=\\$FILE_${i}_PATH; d=\\$FILE_${i}_DATA"',
-  '  printf "%s" "$d" > "$p.tmp" && mv "$p.tmp" "$p" || exit 1',
+  '  eval "p=\\$FILE_${i}_PATH; n=\\$FILE_${i}_PARTS"',
+  '  : > "$p.tmp" || exit 1',
+  '  j=0',
+  '  while [ "$j" -lt "$n" ]; do eval "d=\\$FILE_${i}_DATA_${j}"; printf "%s" "$d" >> "$p.tmp" || exit 1; j=$((j + 1)); done',
+  '  mv "$p.tmp" "$p" || exit 1',
   '  i=$((i + 1))',
   'done',
   'if [ -n "$CIDRS_URL" ] && [ -z "$(find "$CIDRS_FILE" -mtime -7 2>/dev/null)" ]; then',

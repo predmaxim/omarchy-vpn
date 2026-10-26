@@ -116,7 +116,7 @@ assert.deepStrictEqual(cfg["proxy-providers"].s1, { type: "file", path: "./links
 assert.deepStrictEqual(cfg["proxy-providers"].s2, { type: "http", url: "https://sub/x", path: "./subs/s2.txt", interval: 7200 })
 // groups are named by id (a subscription named like its server must not clash); active first
 assert.deepStrictEqual(cfg["proxy-groups"][0], { name: "VPN", type: "fallback", proxies: ["s2", "s1"], url: "https://www.gstatic.com/generate_204", interval: 60, timeout: 5000 })
-assert.deepStrictEqual(cfg["proxy-groups"][1], { name: "s1", type: "url-test", use: ["s1"], url: M.TEST_URL,
+assert.deepStrictEqual(cfg["proxy-groups"][1], { name: "s1", type: "url-test", use: ["s1"], url: M.TEST_URL, lazy: false,
   interval: 300, tolerance: 50, timeout: 5000, "max-failed-times": 3 })
 assert.deepStrictEqual(cfg.rules, [
   "PROCESS-NAME,transmission-qt,DIRECT", "PROCESS-NAME,transmission-gtk,DIRECT", "PROCESS-NAME,transmission-daemon,DIRECT",
@@ -267,3 +267,101 @@ cfg = M.buildConfig(M.patch(cs, { autoSwitch: false }))
 assert.deepStrictEqual(cfg["proxy-groups"][0], { name: "VPN", type: "select", proxies: ["s2", "s1"] })
 assert.strictEqual(M.defaults("").autoSwitch, true)
 console.log("ok autoSwitch")
+
+// Xray JSON subscriptions: one whole Xray config per location; Xray runs them all, mihomo goes through it
+const X = new Function(src + "; return { xrayLocations, xrayConfig, xrayChanges, locationOf, setLocation, nextLocation, setLocations, XRAY_PORT, XRAY_BLOCK, PART }")()
+const vless = (tag, address) => ({ protocol: "vless", tag, settings: { address, port: 8443, id: "U" },
+  streamSettings: { network: "tcp", security: "reality", realitySettings: { serverName: "sni.example", publicKey: "PK", shortId: "ab" } } })
+const geoRules = [{ type: "field", domain: ["domain:ya.ru"], outboundTag: "direct" }, { type: "field", ip: ["geoip:ru"], outboundTag: "direct" }]
+const xray = [
+  { remarks: "🇩🇪 Germany · TCP", outbounds: [vless("de-1", "1.1.1.1"), vless("de-2", "1.1.1.2"), { protocol: "freedom", tag: "direct" }],
+    routing: { rules: geoRules.concat([{ type: "field", network: "tcp,udp", balancerTag: "balancer" }]),
+      balancers: [{ tag: "balancer", selector: ["de-"], fallbackTag: "de-1", strategy: { type: "leastPing" } }, { tag: "other", selector: ["x"] }] },
+    burstObservatory: { subjectSelector: ["de-"], pingConfig: { interval: "1m" } }, dns: { servers: ["8.8.8.8"] }, inbounds: [{ port: 10808, protocol: "mixed" }] },
+  // a catch-all straight to an outbound, after a rule with conditions to a balancer
+  { remarks: "🇳🇱 Amsterdam", outbounds: [vless("nl-1", "2.2.2.2"), { protocol: "freedom", tag: "direct" }],
+    routing: { rules: [{ type: "field", domain: ["x.com"], balancerTag: "b" }, { type: "field", outboundTag: "nl-1" }], balancers: [{ tag: "b" }] },
+    burstObservatory: { subjectSelector: ["nl-"] } },
+  // no rules at all, no tags: Xray's way — the first outbound
+  { outbounds: [Object.assign(vless("", "3.3.3.3"), { tag: undefined })] },
+  { remarks: "🇩🇪 Germany · TCP", outbounds: [vless("de-9", "9.9.9.9")] }]
+const locs = X.xrayLocations(JSON.stringify(xray))
+assert.deepStrictEqual(locs.map(l => l.name), ["🇩🇪 Germany · TCP", "🇳🇱 Amsterdam", "3", "🇩🇪 Germany · TCP 4"])
+// the catch-all rule and its balancer only: what goes direct is mihomo's to decide
+assert.deepStrictEqual(locs[0].rule, { balancerTag: "balancer" })
+assert.deepStrictEqual(locs[0].balancers.map(b => b.tag), ["balancer"])
+assert.deepStrictEqual([locs[1].rule, locs[1].balancers], [{ outboundTag: "nl-1" }, []])
+assert.deepStrictEqual([locs[2].rule, locs[2].balancers, locs[2].observatory], [null, [], null])
+// not Xray JSON: links, base64, Clash YAML, other JSON
+for (const body of ["vless://a@b:1#c\n", "dmxlc3M6Ly9h", "proxies:\n  - name: a\n", "{}", "[]", "[1]"]) assert.strictEqual(X.xrayLocations(body), null)
+// the subscription: kind xray, any location (the fastest); a block of ports of its own when added
+const xsub = M.urlSubscription("https://sub.example.com/x", "HTTP/1.1 200 OK\nprofile-title: base64:4pqhIFRVUkJP\nprofile-update-interval: 1\n\n" + JSON.stringify(xray))
+assert.deepStrictEqual([xsub.kind, xsub.name, xsub.interval, xsub.location, xsub.locations.length], ["xray", "⚡ TURBO", 3600, "", 4])
+let xs = M.addSubscription(M.defaults("sec"), a).state
+xs = M.addSubscription(xs, xsub).state
+xs = M.addSubscription(xs, Object.assign({}, xsub, { id: "sx2" })).state
+assert.deepStrictEqual(xs.subscriptions.map(s => s.port), [undefined, X.XRAY_PORT, X.XRAY_PORT + X.XRAY_BLOCK])
+assert.strictEqual(xsub.port, undefined)
+// Xray: every location behind a SOCKS port of its own, the API secret the password; tags by location
+const xc = X.xrayConfig(xs.subscriptions[1], "sec")
+assert.deepStrictEqual(xc.inbounds.map(i => [i.tag, i.listen, i.port]), [0, 1, 2, 3].map(i => [i + "-in", "127.0.0.1", X.XRAY_PORT + i]))
+assert.deepStrictEqual(xc.inbounds[0].settings, { auth: "password", accounts: [{ user: "vpn", pass: "sec" }], udp: true })
+assert.deepStrictEqual(xc.outbounds.map(o => o.tag), ["0-de-1", "0-de-2", "0-direct", "1-nl-1", "1-direct", "2-o0", "3-de-9"])
+assert.strictEqual(xc.outbounds[0].settings.address, "1.1.1.1")
+assert.deepStrictEqual(xc.routing.rules, [
+  { type: "field", inboundTag: ["0-in"], balancerTag: "0-balancer" }, { type: "field", inboundTag: ["1-in"], outboundTag: "1-nl-1" },
+  { type: "field", inboundTag: ["2-in"], outboundTag: "2-o0" }, { type: "field", inboundTag: ["3-in"], outboundTag: "3-de-9" }])
+assert.deepStrictEqual(xc.routing.balancers, [{ tag: "0-balancer", selector: ["0-de-"], fallbackTag: "0-de-1", strategy: { type: "leastPing" } }])
+assert.deepStrictEqual(xc.burstObservatory, { subjectSelector: ["0-de-", "1-nl-"], pingConfig: { interval: "1m" } })
+assert.ok(!("dns" in xc))
+// the stored locations stay as they came
+assert.strictEqual(xs.subscriptions[1].locations[0].outbounds[0].tag, "de-1")
+// mihomo: a SOCKS server per location, named after it; Xray's own traffic goes direct
+const xfiles = M.files(xs)
+assert.deepStrictEqual(xfiles.map(f => f.path), ["state.json", "config.yaml", "links/sa.txt", "xray/" + xsub.id + ".json", "links/" + xsub.id + ".txt", "xray/sx2.json", "links/sx2.txt"])
+assert.deepStrictEqual(JSON.parse(xfiles[3].data), xc)
+const xproxies = st => JSON.parse(M.files(st).find(f => f.path === "links/" + xsub.id + ".txt").data).proxies
+assert.deepStrictEqual(xproxies(xs)[1], { name: "🇳🇱 Amsterdam", type: "socks5", server: "127.0.0.1", port: X.XRAY_PORT + 1,
+  username: "vpn", password: "sec", udp: true })
+assert.deepStrictEqual(xproxies(xs).map(p => p.name), locs.map(l => l.name))
+const xcfg = M.buildConfig(xs)
+assert.deepStrictEqual(xcfg["proxy-providers"][xsub.id], { type: "file", path: "./links/" + xsub.id + ".txt" })
+assert.strictEqual(xcfg.rules[0], "PROCESS-NAME,xray,DIRECT")
+assert.ok(!M.buildConfig(M.addSubscription(M.defaults("k"), a).state).rules.includes("PROCESS-NAME,xray,DIRECT"))
+assert.ok(!M.writerEnv(xs).KEEP_SUBS.includes(xsub.id))
+// picking a location: mihomo gets that one only; Xray stays as it is
+assert.strictEqual(X.setLocation(xs, xsub.id, "nope"), xs)
+assert.strictEqual(X.setLocation(xs, xsub.id, ""), xs)
+assert.strictEqual(X.setLocation(xs, "nope", "🇳🇱 Amsterdam"), xs)
+assert.strictEqual(X.setLocation(xs, "sa", ""), xs)
+const xs2 = X.setLocation(xs, xsub.id, "🇳🇱 Amsterdam")
+assert.deepStrictEqual(xproxies(xs2).map(p => [p.name, p.port]), [["🇳🇱 Amsterdam", X.XRAY_PORT + 1]])
+assert.strictEqual(X.locationOf(xs2.subscriptions[1]).name, "🇳🇱 Amsterdam")
+assert.strictEqual(X.locationOf(xs.subscriptions[1]), null)
+assert.deepStrictEqual(xproxies(X.setLocation(xs2, xsub.id, "")).length, 4)
+// Xray restarts only where its config changed (servers, ports, secret); a removed subscription's Xray stops
+assert.deepStrictEqual(X.xrayChanges(xs, xs2), { restart: [], stop: [] })
+assert.deepStrictEqual(X.xrayChanges(M.defaults("sec"), xs), { restart: [xsub.id, "sx2"], stop: [] })
+assert.deepStrictEqual(X.xrayChanges(xs, M.removeSubscription(xs, "sx2")), { restart: [], stop: ["sx2"] })
+assert.deepStrictEqual(X.xrayChanges(xs, M.patch(xs, { secret: "new" })), { restart: [xsub.id, "sx2"], stop: [] })
+assert.deepStrictEqual(X.xrayChanges(xs, X.setLocations(xs, xsub.id, locs.slice(1))), { restart: [xsub.id], stop: [] })
+// ←/→: any, then the locations, round
+assert.deepStrictEqual([1, 2, -1, 5].map(s => X.nextLocation(xs.subscriptions[1], s)), ["🇩🇪 Germany · TCP", "🇳🇱 Amsterdam", "🇩🇪 Germany · TCP 4", ""])
+assert.deepStrictEqual([1, -2].map(s => X.nextLocation(xs2.subscriptions[1], s)), ["3", ""])
+// a fresh download keeps the picked location while it is there, else any
+assert.strictEqual(X.setLocations(xs2, xsub.id, locs.slice(1)).subscriptions[1].location, "🇳🇱 Amsterdam")
+assert.strictEqual(X.setLocations(xs2, xsub.id, [locs[2]]).subscriptions[1].location, "")
+// the writer: a state.json past one environment variable goes in parts, emoji intact; xray/ is cleaned like links/
+const big = M.patch(xs, { directDomains: Array.from({ length: 9000 }, (_, i) => "d" + i + ".example.com") })
+big.subscriptions[1].name = "x".repeat(X.PART - 30) + "🇩🇪"
+const benv = M.writerEnv(big)
+assert.ok(Number(benv.FILE_0_PARTS) > 3)
+assert.ok(Object.keys(benv).filter(k => /_DATA_/.test(k)).every(k => benv[k].length <= X.PART && !/[\uD800-\uDBFF]$/.test(benv[k])))
+const xdir = fs.mkdtempSync(path.join(os.tmpdir(), "vpn-"))
+fs.mkdirSync(xdir + "/xray"); fs.writeFileSync(xdir + "/xray/gone.json", "secret")
+cp.execFileSync("sh", ["-c", M.WRITE_SCRIPT, "sh", xdir], { env: Object.assign({}, process.env, benv, { CIDRS_URL: "" }) })
+assert.deepStrictEqual(JSON.parse(fs.readFileSync(xdir + "/state.json", "utf8")), big)
+assert.deepStrictEqual(fs.readdirSync(xdir + "/xray").sort(), [xsub.id + ".json", "sx2.json"])
+assert.strictEqual(fs.statSync(xdir + "/xray/sx2.json").mode & 0o777, 0o600)
+fs.rmSync(xdir, { recursive: true })
+console.log("ok xray")

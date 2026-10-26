@@ -22,7 +22,8 @@ var TABLES = {
     "No subscriptions yet: copy a link or a subscription URL and press “From clipboard”.":
       "Подписок пока нет: скопируйте ссылку или адрес подписки и нажмите «Из буфера».",
     "No link or subscription found": "Ссылка или подписка не найдена", "Already added": "Уже добавлена",
-    "Added: %1": "Добавлена: %1", "No usable servers in %1": "В %1 нет подходящих серверов",
+    "Added: %1": "Добавлена: %1", "Locations: %1": "Локаций: %1", "Auto (fastest)": "Авто (самая быстрая)",
+    "Could not start Xray": "Не удалось запустить Xray", "See: journalctl --user -u mihomo-xray@%1": "Смотрите: journalctl --user -u mihomo-xray@%1", "No usable servers in %1": "В %1 нет подходящих серверов",
     "Could not download the subscription": "Не удалось скачать подписку",
     "No QR code found in the selected area": "В выделенной области нет QR-кода",
     "From clipboard": "Из буфера", "QR from screen": "QR с экрана",

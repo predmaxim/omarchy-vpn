@@ -24,7 +24,9 @@ Panel {
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
   // The globe (bar and window header) is orange between states, as
   // predmaxim.power's charging: the theme has no such role.
-  readonly property bool connecting: Model.isConnecting(vpn.view, root.busy, root.retryAttempt)
+  // A change in the background (a location of a subscription not in use, a
+  // fresh download) is no new connection: the globe stays as it is.
+  readonly property bool connecting: Model.isConnecting(vpn.view, root.busy && !(root.pending && root.pending.options.background), root.retryAttempt)
   readonly property color orange: "#e0823d"
 
   // Page: "subs" (main) or "rules" (settings, behind the header gear).
@@ -46,6 +48,10 @@ Panel {
   // Changes that arrived while another one was being written: they wait their turn.
   property var queue: []
   property int retryAttempt: 0
+  // Xray subscriptions: id -> when the widget last downloaded each (ms).
+  property var refreshedAt: ({})
+  // A location dropdown is open: its popup has the keys.
+  property bool locationsOpen: false
 
   // The plugin's own icon: the notification center shows -i, and "VPN" has no .desktop to look one up in.
   readonly property string notifyIcon: String(Qt.resolvedUrl("globe.svg")).replace(/^file:\/\//, "")
@@ -59,7 +65,7 @@ Panel {
   // runs once everything went through. A change arriving while another is written
   // waits its turn and is computed from the state at its turn, so it never
   // undoes the one before. A broken state.json is never written over: it holds
-  // the only copy of the subscription keys. options: { rollback, firstRun }.
+  // the only copy of the subscription keys. options: { rollback, firstRun, background }.
   function commit(change, reload, after, options) {
     options = options || {}
     if (vpn.broken) {
@@ -82,6 +88,15 @@ Panel {
     if (code !== 0) { root.done(); root.notify(root.tr("Could not save VPN settings"), ""); return }
     // A first run may have found another widget's state.json: read the file back.
     if (p.options.firstRun) vpn.reread(); else vpn.saved = p.next
+    var x = Model.xrayChanges(p.prev, p.next)
+    if (!x.restart.length && !x.stop.length) { root.applied(); return }
+    xrayctl.command = ["sh", "-c", xrayctl.script, "sh", x.restart.join(" "), x.stop.join(" ")]
+    xrayctl.running = true
+  }
+
+  // Files written and Xray (re)started where its config changed: now mihomo.
+  function applied() {
+    var p = root.pending
     if (!p.reload || !vpn.apiUp) { root.done(); if (p.after) p.after(); return }
     vpn.quiet = true
     restarter.running = true
@@ -243,6 +258,7 @@ Panel {
 
   function addSubscription(sub) {
     if (Model.addSubscription(vpn.saved, sub).error) { root.notify(root.tr("Already added"), sub.name); return }
+    if (sub.kind === "xray") root.refreshedAt[sub.id] = Date.now()   // just downloaded
     root.commit(function(s) { return Model.addSubscription(s, sub).state }, true, function() { root.verifyAdded(sub, 0) })
   }
 
@@ -251,11 +267,54 @@ Panel {
   function verifyAdded(sub, attempt) {
     vpn.call("GET", "/providers/proxies/" + sub.id, null, function(ok, data) {
       var count = ok && data && data.proxies ? data.proxies.length : 0
-      if (count > 0) { root.notify(root.tr("Added: %1", sub.name), root.tr("Servers: %1", count)); return }
+      if (count > 0) {
+        root.notify(root.tr("Added: %1", sub.name), sub.locations ? root.tr("Locations: %1", sub.locations.length) : root.tr("Servers: %1", count))
+        return
+      }
       if (attempt < 2) { root.later(2000, function() { root.verifyAdded(sub, attempt + 1) }); return }
       root.notify(root.tr("No usable servers in %1", sub.name), "")
       root.commit(function(s) { return Model.removeSubscription(s, sub.id) }, true, null)
     })
+  }
+
+  // A location of an xray subscription ("" — any, the fastest): Xray runs them
+  // all, so only mihomo's file of the subscription changes — no restart.
+  function setLocation(id, name) {
+    if (Model.setLocation(vpn.saved, id, name) === vpn.saved || root.busy) return
+    root.commit(function(s) { return Model.setLocation(s, id, name) }, false, function() { root.reloadProvider(id) },
+      { background: id !== vpn.st.group })
+  }
+
+  // mihomo re-reads a file provider on PUT; then the subscription's servers are
+  // tested (after a fresh download Xray takes a moment to listen again). The
+  // subscription in use starts the retries over, like a new connection.
+  function reloadProvider(id) {
+    vpn.call("PUT", "/providers/proxies/" + id, null, function() {
+      root.later(1000, function() { root.testGroup(id, id === vpn.st.group ? root.probe : function() { vpn.poll() }) })
+    })
+  }
+
+  // Xray subscriptions: mihomo doesn't download them, so the widget does —
+  // every profile-update-interval (an hour by default), one at a time. A failed
+  // download waits its interval too.
+  function refreshDue() {
+    if (refresher.running) return
+    var now = Date.now()
+    var sub = vpn.saved.subscriptions.filter(function(s) {
+      return s.kind === "xray" && now - (root.refreshedAt[s.id] || 0) >= s.interval * 1000 })[0]
+    if (!sub) return
+    root.refreshedAt[sub.id] = now
+    refresher.subId = sub.id
+    refresher.url = sub.url
+    refresher.running = true
+  }
+
+  function refreshed(id, raw) {
+    var locations = Model.xrayLocations(Model.splitResponse(raw).body)
+    var sub = vpn.saved.subscriptions.filter(function(s) { return s.id === id })[0]
+    if (!sub || !locations || JSON.stringify(locations) === JSON.stringify(sub.locations)) return
+    root.commit(function(s) { return Model.setLocations(s, id, locations) }, false, function() { root.reloadProvider(id) },
+      { background: id !== vpn.st.group })
   }
 
   // The modal hides first, or slurp would select over it.
@@ -319,21 +378,46 @@ Panel {
 
   Timer { id: qrDelay; interval: 250; onTriggered: qr.running = true }
 
-  // The URL goes through curl's --variable from the environment: argv is
-  // readable by every user, and subscription URLs carry keys.
+  // Xray of xray subscriptions: user units (systemd/mihomo-xray@.service), no
+  // polkit. $1 — ids to (re)start, $2 — ids to stop; ids are [a-z0-9].
   Process {
-    id: fetcher
+    id: xrayctl
+    readonly property string script: 'for id in $1; do systemctl --user enable -q "mihomo-xray@$id" && systemctl --user restart "mihomo-xray@$id" || r=1; done; ' +
+      'for id in $2; do systemctl --user disable -q --now "mihomo-xray@$id"; done; exit ${r:-0}'
+    onExited: function(code) {
+      if (code !== 0) root.notify(root.tr("Could not start Xray"), root.tr("See: journalctl --user -u mihomo-xray@%1", xrayctl.command[4]))
+      root.applied()
+    }
+  }
+
+  // curl for a subscription URL. The URL goes through curl's --variable from
+  // the environment: argv is readable by every user, and subscription URLs carry keys.
+  component Fetcher: Process {
     property string url: ""
-    environment: ({ VPN_URL: fetcher.url })
+    readonly property alias text: fetched.text
+    readonly property alias errors: fetchErrors.text
+    environment: ({ VPN_URL: url })
     command: ["curl", "-sSL", "--max-time", "15", "--retry", "2", "--retry-delay", "3", "--retry-all-errors",
       "-D", "-", "--variable", "%VPN_URL", "--expand-url", "{{VPN_URL}}"]
     stdout: StdioCollector { id: fetched }
     stderr: StdioCollector { id: fetchErrors }
+  }
+
+  Fetcher {
+    id: fetcher
     onExited: function(code) {
-      if (code !== 0) root.notify(root.tr("Could not download the subscription"), fetchErrors.text.trim())
-      else root.addSubscription(Model.urlSubscription(fetcher.url, fetched.text))
+      if (code !== 0) root.notify(root.tr("Could not download the subscription"), fetcher.errors.trim())
+      else root.addSubscription(Model.urlSubscription(fetcher.url, fetcher.text))
     }
   }
+
+  Fetcher {
+    id: refresher
+    property string subId: ""
+    onExited: function(code) { if (code === 0) root.refreshed(refresher.subId, refresher.text) }
+  }
+
+  Timer { interval: 60000; running: true; repeat: true; onTriggered: root.refreshDue() }
 
   Process {
     id: paste
@@ -423,9 +507,13 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: confirm.opened || country.popupOpen || root.editor !== null
+      blocked: confirm.opened || country.popupOpen || root.locationsOpen || root.editor !== null
       onMoveRequested: function(dx, dy) {
-        if (dx) { if (root.cursor === -2) root.headCol = Math.max(root.statusText ? -1 : 0, Math.min(root.tab === "subs" ? 1 : 0, root.headCol + dx)) }
+        var sub = root.cursorId() ? vpn.saved.subscriptions[root.cursor] : null
+        if (dx) {
+          if (root.cursor === -2) root.headCol = Math.max(root.statusText ? -1 : 0, Math.min(root.tab === "subs" ? 1 : 0, root.headCol + dx))
+          else if (sub && sub.locations) root.setLocation(sub.id, Model.nextLocation(sub, dx))
+        }
         else { root.moveCursor(dy); if (root.cursor >= 0) subsList.positionViewAtIndex(root.cursor, ListView.Contain) }
       }
       onActivateRequested: if (root.cursor === -2) root.activateHeader(); else if (root.cursorId()) root.use(root.cursorId())
@@ -603,8 +691,24 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.space(6)
 
+                // An xray subscription's location (←/→ on the row, too): any — the fastest that answers — or one.
+                Dropdown {
+                  visible: !!row.modelData.locations
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.spacing.dropdownWidth
+                  showLabel: false
+                  options: [{ value: "", label: root.tr("Auto (fastest)") }].concat((row.modelData.locations || []).map(function(l) { return l.name }))
+                  value: (Model.locationOf(row.modelData) || { name: "" }).name
+                  foreground: root.fg
+                  fontFamily: root.fontFamily
+                  onChanged: function(value) { root.setLocation(row.modelData.id, value) }
+                  onHovered: function(on) { if (on) root.cursor = row.index }
+                  onPopupOpenChanged: root.locationsOpen = popupOpen
+                  // A new state rebuilds the rows: a popup gone with its row must not keep the keys.
+                  Component.onDestruction: if (popupOpen) root.locationsOpen = false
+                }
                 Text {
-                  visible: row.count !== undefined
+                  visible: row.count !== undefined && !row.modelData.locations
                   anchors.verticalCenter: parent.verticalCenter
                   text: root.tr("Servers: %1", row.count)
                   color: root.muted

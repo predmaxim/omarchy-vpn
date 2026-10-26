@@ -1,0 +1,14 @@
+# Xray for one Xray JSON subscription of predmaxim.vpn (%i — its id): the
+# picked location behind a SOCKS port on localhost, mihomo goes through it. The
+# widget writes ~/.config/mihomo/xray/%i.json, enables and restarts this unit.
+[Unit]
+Description=Xray for VPN subscription %i
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/xray run -c %h/.config/mihomo/xray/%i.json
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
