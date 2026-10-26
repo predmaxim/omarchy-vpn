@@ -31,9 +31,14 @@ Panel {
   property string tab: "subs"
   property string pendingId: ""
   // The subscription row under the keyboard/mouse cursor (subs page);
-  // -2: the header, where headCol picks the gear/Back (0) or the switch (1).
+  // -2: the header, where headCol picks the status line (-1), the gear/Back (0) or the switch (1).
   property int cursor: -1
   property int headCol: 0
+  // The header's status line, while on or failing; a click on it re-checks,
+  // and "…" stands in for the delay until the answer.
+  property bool testing: false
+  readonly property string statusText: vpn.view.kind === "on" || Model.isError(vpn.view)
+    ? Model.tooltip(root.testing ? Model.patch(vpn.view, { delay: -1 }) : vpn.view, root.tr) : ""
   // The domain field being typed into: the key catcher steps aside for it.
   property Item editor: null
   property bool busy: false
@@ -165,9 +170,20 @@ Panel {
   function probe() {
     root.retryAttempt = 0
     retryTimer.stop()
-    vpn.call("GET", "/group/VPN/delay?url=" + encodeURIComponent(Model.TEST_URL) + "&timeout=5000", null,
-      function() { vpn.poll() })
+    root.testGroup("VPN", function() { vpn.poll() })
     vpn.poll()
+  }
+
+  function testGroup(group, done) {
+    vpn.call("GET", "/group/" + group + "/delay?url=" + encodeURIComponent(Model.TEST_URL) + "&timeout=5000", null, done)
+  }
+
+  // The status line: test the current subscription's servers now (url-test
+  // keeps the fastest) — or download it again when it has none.
+  function retest() {
+    if (root.testing || !root.statusText) return
+    root.testing = true
+    root.recheck(function() { root.testing = false; vpn.poll() })
   }
 
   function moveCursor(dy) {
@@ -180,9 +196,10 @@ Panel {
     root.tab = page
     root.headCol = 0
   }
-  // Enter on the header: the gear/Back or the switch.
+  // Enter on the header: the status line, the gear/Back or the switch.
   function activateHeader() {
-    if (root.headCol === 1) root.setEnabled(!vpn.saved.enabled)
+    if (root.headCol === -1) root.retest()
+    else if (root.headCol === 1) root.setEnabled(!vpn.saved.enabled)
     else root.showPage(root.tab === "subs" ? "rules" : "subs")
   }
 
@@ -263,11 +280,16 @@ Panel {
   }
 
   function retryNow() {
-    var group = vpn.st.group
     root.retryAttempt++
-    if (!group) return
-    if (vpn.view.kind === "nosrv") vpn.call("PUT", "/providers/proxies/" + group, null, null)
-    else vpn.call("GET", "/group/" + group + "/delay?url=" + encodeURIComponent(Model.TEST_URL) + "&timeout=5000", null, null)
+    root.recheck(null)
+  }
+
+  // An empty subscription — download it again; otherwise — test its servers.
+  function recheck(done) {
+    var group = vpn.st.group
+    if (!group) { if (done) done(); return }
+    if (vpn.view.kind === "nosrv") vpn.call("PUT", "/providers/proxies/" + group, null, done)
+    else root.testGroup(group, done)
   }
 
   Status {
@@ -403,7 +425,7 @@ Panel {
       anchors.fill: parent
       blocked: confirm.opened || country.popupOpen || root.editor !== null
       onMoveRequested: function(dx, dy) {
-        if (dx) { if (root.cursor === -2) root.headCol = Math.max(0, Math.min(root.tab === "subs" ? 1 : 0, root.headCol + dx)) }
+        if (dx) { if (root.cursor === -2) root.headCol = Math.max(root.statusText ? -1 : 0, Math.min(root.tab === "subs" ? 1 : 0, root.headCol + dx)) }
         else { root.moveCursor(dy); if (root.cursor >= 0) subsList.positionViewAtIndex(root.cursor, ListView.Contain) }
       }
       onActivateRequested: if (root.cursor === -2) root.activateHeader(); else if (root.cursorId()) root.use(root.cursorId())
@@ -434,10 +456,32 @@ Panel {
         spacing: Style.space(14)
 
         PanelHero {
+          id: hero
           title: vpn.saved.enabled ? root.tr("VPN is on") : root.tr("VPN is off")
-          meta: vpn.view.kind === "on" || Model.isError(vpn.view) ? Model.tooltip(vpn.view, root.tr) : ""
+          meta: root.statusText
           foreground: root.fg
           fontFamily: root.fontFamily
+
+          // The icon, title and status line: a click (or Enter, ← from the gear) re-checks the delay.
+          CursorSurface {
+            z: -1
+            visible: root.statusText !== ""
+            anchors.fill: parent
+            anchors.margins: -Style.space(6)
+            anchors.rightMargin: hero.trailingInset - Style.space(6)
+            foreground: root.fg
+            hasCursor: root.cursor === -2 && root.headCol === -1
+
+            MouseArea {
+              id: statusMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onPositionChanged: function(mouse) { if (pointerGate.moved(statusMouse, mouse)) { root.cursor = -2; root.headCol = -1 } }
+              onClicked: { root.cursor = -2; root.headCol = -1; root.retest() }
+            }
+            PanelToolTip { visible: statusMouse.containsMouse; text: root.tr("Check the delay again") }
+          }
           iconComponent: Text {
             text: Model.glyph(vpn.view)
             color: root.connecting ? root.orange : Model.isError(vpn.view) ? Color.urgent : root.fg
