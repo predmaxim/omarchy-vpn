@@ -357,6 +357,11 @@ function buildConfig(state) {
     "secret": state.secret,
     "profile": { "store-selected": true },
     "dns": { "enable": true, "nameserver": ["system"] },
+    // Apps ask the router's DNS (a private network, routed past TUN), so mihomo
+    // sees bare IPs: the domain rules match only on the name read from the
+    // connection itself. The destination stays the IP: no second lookup.
+    "sniffer": { "enable": true, "parse-pure-ip": true, "override-destination": false,
+      "sniff": { "HTTP": { "ports": ["80", "8080-8880"] }, "TLS": { "ports": ["443", "8443"] }, "QUIC": { "ports": ["443", "8443"] } } },
     "tun": { "enable": !!state.enabled && subs.length > 0, "stack": "gvisor", "auto-route": true,
       "auto-detect-interface": true, "dns-hijack": ["any:53"],
       "route-exclude-address": (country ? [CIDRS_MARK] : []).concat(PRIVATE), "exclude-src-port": state.directPorts },

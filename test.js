@@ -112,6 +112,10 @@ const PRIV = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", 
 assert.deepStrictEqual(cfg.tun, { enable: true, stack: "gvisor", "auto-route": true, "auto-detect-interface": true, "dns-hijack": ["any:53"],
   "route-exclude-address": ["@country-cidrs"].concat(PRIV), "exclude-src-port": [51413] })
 assert.deepStrictEqual(cfg.dns, { enable: true, nameserver: ["system"] })
+// DNS goes past TUN: without sniffing no connection has a name, and no domain rule matches
+assert.strictEqual(cfg.sniffer.enable, true)
+assert.strictEqual(cfg.sniffer["parse-pure-ip"], true)
+assert.deepStrictEqual(Object.keys(cfg.sniffer.sniff), ["HTTP", "TLS", "QUIC"])
 assert.deepStrictEqual(cfg["proxy-providers"].s1, { type: "file", path: "./links/s1.txt" })
 assert.deepStrictEqual(cfg["proxy-providers"].s2, { type: "http", url: "https://sub/x", path: "./subs/s2.txt", interval: 7200 })
 // groups are named by id (a subscription named like its server must not clash); active first
