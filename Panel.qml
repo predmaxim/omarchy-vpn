@@ -174,8 +174,11 @@ Panel {
   function use(id) {
     var next = Model.useSubscription(vpn.saved, id)
     if (next === vpn.saved || root.busy) return
+    // PUT alone doesn't hold: a group test (probe) makes mihomo drop a fallback's pick, and the
+    // running config still has the old order. The restart puts the picked one first; the PUT
+    // keeps mihomo's cached pick (restored on start) the same.
     vpn.call("PUT", "/proxies/VPN", { name: id }, function(ok) {
-      if (ok) root.commit(function(s) { return Model.useSubscription(s, id) }, false, root.probe)
+      if (ok) root.commit(function(s) { return Model.useSubscription(s, id) }, true)
     })
   }
 
