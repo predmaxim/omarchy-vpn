@@ -13,6 +13,8 @@ import "I18n.js" as I18n
 // API. Its window is a modal in the middle of the screen.
 Panel {
   id: root
+  // Fixed status colours (FixedColors.qml): a theme's red can be any colour.
+  readonly property QtObject fixedColors: FixedColors {}
   moduleName: "predmaxim.vpn"
   ipcTarget: "predmaxim.vpn"
 
@@ -27,7 +29,7 @@ Panel {
   // A change in the background (a location of a subscription not in use, a
   // fresh download) is no new connection: the globe stays as it is.
   readonly property bool connecting: Model.isConnecting(vpn.view, root.busy && !(root.pending && root.pending.options.background), root.retryAttempt)
-  readonly property color orange: "#e0823d"
+  readonly property color orange: fixedColors.values.orange || "#e0823d"
 
   // Page: "subs" (main) or "rules" (settings, behind the header gear).
   property string tab: "subs"
@@ -459,7 +461,7 @@ Panel {
     bar: root.bar
     text: Model.glyph(vpn.view)
     tooltipText: Model.tooltip(vpn.view, root.tr)
-    foreground: root.connecting ? root.orange : Model.isError(vpn.view) ? Color.urgent : (vpn.view.kind === "on" ? root.barForeground : Qt.darker(root.barForeground, 1.4))
+    foreground: root.connecting ? root.orange : Model.isError(vpn.view) ? fixedColors.red : (vpn.view.kind === "on" ? root.barForeground : Qt.darker(root.barForeground, 1.4))
     onPressed: function(button) {
       if (button === Qt.RightButton && vpn.saved.subscriptions.length) root.setEnabled(!vpn.saved.enabled)
       else root.toggle()
@@ -575,7 +577,7 @@ Panel {
           }
           iconComponent: Text {
             text: Model.glyph(vpn.view)
-            color: root.connecting ? root.orange : Model.isError(vpn.view) ? Color.urgent : root.fg
+            color: root.connecting ? root.orange : Model.isError(vpn.view) ? fixedColors.red : root.fg
             font.family: root.fontFamily
             font.pixelSize: Style.font.display
           }
