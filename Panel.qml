@@ -10,7 +10,7 @@ import "I18n.js" as I18n
 
 // VPN through mihomo (TUN). This widget owns every change: it writes
 // ~/.config/mihomo (state.json, config.yaml, link files) and drives mihomo's
-// API. Its window is a modal in the middle of the screen.
+// API. Its window is a panel under the bar icon, like the stock Wi-Fi one.
 Panel {
   id: root
   // Fixed status colours (FixedColors.qml): a theme's red can be any colour.
@@ -372,7 +372,7 @@ Panel {
       { background: id !== vpn.st.group })
   }
 
-  // The modal hides first, or slurp would select over it.
+  // The panel hides first, or slurp would select over it.
   function scanQr() {
     root.close()
     qrDelay.start()
@@ -518,41 +518,21 @@ Panel {
     }
   }
 
-  // A modal in the middle of the screen, like todo's: a click on the dimmed
-  // screen or Esc closes it.
-  PanelWindow {
-    id: modal
-    screen: root.QsWindow.window ? root.QsWindow.window.screen : null
-    visible: root.opened
-    color: Color.menu.scrim
-    exclusionMode: ExclusionMode.Ignore
-    anchors { top: true; bottom: true; left: true; right: true }
-    WlrLayershell.namespace: "predmaxim-vpn"
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-    onVisibleChanged: if (visible) Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-
-    MouseArea { anchors.fill: parent; onClicked: root.close() }
-
-    BorderSurface {
-      id: card
-      anchors.centerIn: parent
-      width: Math.min(Style.space(480), modal.width - Style.space(80))
-      height: Math.min(column.implicitHeight + card.contentTopInset + card.contentBottomInset, modal.height * 0.85)
-      color: Color.popups.background
-      borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
-      padding: Style.spacing.panelPadding
-      radius: Style.cornerRadius
-
-      MouseArea { anchors.fill: parent }   // clicks on the card stay on it
+  // A panel under the bar icon, like the stock Wi-Fi and audio ones: a click
+  // outside or Esc closes it.
+  KeyboardPanel {
+    id: panel
+    anchorItem: icon
+    owner: root
+    bar: root.bar
+    open: root.opened
+    focusTarget: keyCatcher
+    contentWidth: panel.fittedContentWidth(Style.space(480))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight)
 
     // What the catcher lets through: the dialog's keys, Delete, and Esc while typing.
     Item {
       anchors.fill: parent
-      anchors.topMargin: card.contentTopInset
-      anchors.rightMargin: card.contentRightInset
-      anchors.bottomMargin: card.contentBottomInset
-      anchors.leftMargin: card.contentLeftInset
       Keys.onPressed: function(event) {
         if (confirm.opened) { if (confirm.handleKey(event)) event.accepted = true; return }
         if (event.key === Qt.Key_Escape && root.editor) { root.back(); event.accepted = true; return }
@@ -815,9 +795,15 @@ Panel {
             font.letterSpacing: 1.2
           }
 
+          // Two halves of the full width, like the stock panels' action buttons.
           Row {
+            id: addRow
+            width: parent.width
             spacing: Style.space(8)
+            readonly property real half: (width - spacing) / 2
             Button {
+              width: addRow.half
+              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
               iconText: "\u{F014A}"
               text: root.tr("From clipboard")
               bordered: true
@@ -828,6 +814,8 @@ Panel {
               onClicked: paste.running = true
             }
             Button {
+              width: addRow.half
+              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
               iconText: "\u{F0433}"
               text: root.tr("QR from screen")
               bordered: true
@@ -1027,5 +1015,4 @@ Panel {
     }
   }
 }
-  }
 }
