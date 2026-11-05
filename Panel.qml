@@ -35,9 +35,27 @@ Panel {
   property string tab: "subs"
   property string pendingId: ""
   // The subscription row under the keyboard/mouse cursor (subs page);
-  // -2: the header, where headCol picks the status line (-1), the gear/Back (0) or the switch (1).
+  // -2: the header, where headCol picks the status line (-1), the gear/Back (0) or the switch (1);
+  // addRow (one past the last subscription): the two add buttons, addCol picks one.
   property int cursor: -1
   property int headCol: 0
+  property int addCol: 0
+  readonly property int addRow: vpn.saved.subscriptions.length
+  // Rules page rows for the keyboard, in screen order; cursor indexes them there.
+  readonly property var ruleRows: {
+    var rows = [{ kind: "country" }, { kind: "ads" }, { kind: "auto" }]
+    ;["proxyDomains", "directDomains"].forEach(function(list) {
+      rows.push({ kind: "field", list: list })
+      ;(vpn.saved[list] || []).forEach(function(d) { rows.push({ kind: "domain", list: list, value: d }) })
+    })
+    return rows
+  }
+  onRuleRowsChanged: if (root.tab === "rules" && root.cursor >= root.ruleRows.length) root.cursor = root.ruleRows.length - 1
+  signal focusFieldRequested(string list)
+  function ruleAt(kind, list, value) {
+    var r = root.tab === "rules" && root.cursor >= 0 ? root.ruleRows[root.cursor] : null
+    return !!r && r.kind === kind && (list === undefined || r.list === list) && (value === undefined || r.value === value)
+  }
   // The header's status line, while on or failing; a click on it re-checks,
   // and "…" stands in for the delay until the answer.
   property bool testing: false
@@ -207,10 +225,42 @@ Panel {
   }
 
   function moveCursor(dy) {
-    var count = root.tab === "subs" ? vpn.saved.subscriptions.length : 0
     if (dy < 0 && root.cursor <= 0) { root.cursor = -2; return }
-    if (count === 0) { root.cursor = dy > 0 ? -1 : -2; return }
-    root.cursor = Math.max(0, Math.min(count - 1, root.cursor < 0 ? 0 : root.cursor + dy))
+    // Subs: the rows, then the add buttons under them (addRow). Rules: ruleRows.
+    var last = root.tab === "subs" ? root.addRow : root.ruleRows.length - 1
+    root.cursor = Math.max(0, Math.min(last, root.cursor < 0 ? 0 : root.cursor + dy))
+  }
+  // ←/→ on a rules row changes its value; Enter does that too, focuses the
+  // field, or deletes the domain.
+  function ruleChange() {
+    var r = root.ruleRows[root.cursor]
+    if (!r) return
+    if (r.kind === "country") {
+      var next = vpn.saved.country ? "" : "ru"
+      root.commit(function(s) { return Model.patch(s, { country: next }) }, true, null)
+    }
+    else if (r.kind === "ads") root.commit(function(s) { return Model.patch(s, { blockAds: !s.blockAds }) }, true, null)
+    else if (r.kind === "auto") root.commit(function(s) { return Model.patch(s, { autoSwitch: !s.autoSwitch }) }, true, null)
+  }
+  function ruleActivate() {
+    var r = root.ruleRows[root.cursor]
+    if (!r) return
+    if (r.kind === "field") root.focusFieldRequested(r.list)
+    else if (r.kind === "domain") root.removeDomain(r.list, r.value)
+    else root.ruleChange()
+  }
+  // Keep the rules row under the cursor in view (the page scrolls past 440).
+  function showRuleRow(item) {
+    var y = item.mapToItem(rulesColumn, 0, 0).y
+    if (y < rulesTab.contentY) rulesTab.contentY = y
+    else if (y + item.height > rulesTab.contentY + rulesTab.height) rulesTab.contentY = y + item.height - rulesTab.height
+  }
+  function removeDomain(list, domain) {
+    root.commit(function(s) { return Model.removeDomain(s, list, domain) }, true, null)
+  }
+  function activateAdd() {
+    if (root.addCol === 0) paste.running = true
+    else root.scanQr()
   }
   function showPage(page) {
     root.tab = page
@@ -517,12 +567,25 @@ Panel {
         var sub = root.cursorId() ? vpn.saved.subscriptions[root.cursor] : null
         if (dx) {
           if (root.cursor === -2) root.headCol = Math.max(root.statusText ? -1 : 0, Math.min(root.tab === "subs" ? 1 : 0, root.headCol + dx))
+          else if (root.tab === "subs" && root.cursor === root.addRow) root.addCol = Math.max(0, Math.min(1, root.addCol + dx))
+          else if (root.tab === "rules" && root.cursor >= 0) root.ruleChange()
           else if (sub && sub.locations) root.setLocation(sub.id, Model.nextLocation(sub, dx))
         }
-        else { root.moveCursor(dy); if (root.cursor >= 0) subsList.positionViewAtIndex(root.cursor, ListView.Contain) }
+        else {
+          root.moveCursor(dy)
+          if (root.tab === "subs" && root.cursor >= 0 && root.cursor < root.addRow) subsList.positionViewAtIndex(root.cursor, ListView.Contain)
+        }
       }
-      onActivateRequested: if (root.cursor === -2) root.activateHeader(); else if (root.cursorId()) root.use(root.cursorId())
-      onDeleteRequested: root.askRemove(root.cursorId())
+      onActivateRequested: {
+        if (root.cursor === -2) root.activateHeader()
+        else if (root.tab === "subs" && root.cursor === root.addRow) root.activateAdd()
+        else if (root.tab === "rules" && root.cursor >= 0) root.ruleActivate()
+        else if (root.cursorId()) root.use(root.cursorId())
+      }
+      onDeleteRequested: {
+        if (root.ruleAt("domain")) root.ruleActivate()
+        else root.askRemove(root.cursorId())
+      }
       onCloseRequested: root.back()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -760,6 +823,8 @@ Panel {
               bordered: true
               foreground: root.fg
               fontFamily: root.fontFamily
+              hasCursor: root.cursor === root.addRow && root.addCol === 0
+              onHovered: function(on) { if (on) { root.cursor = root.addRow; root.addCol = 0 } }
               onClicked: paste.running = true
             }
             Button {
@@ -768,6 +833,8 @@ Panel {
               bordered: true
               foreground: root.fg
               fontFamily: root.fontFamily
+              hasCursor: root.cursor === root.addRow && root.addCol === 1
+              onHovered: function(on) { if (on) { root.cursor = root.addRow; root.addCol = 1 } }
               onClicked: root.scanQr()
             }
           }
@@ -788,9 +855,12 @@ Panel {
             width: rulesTab.width
             spacing: Style.space(14)
 
-            Item {
+            CursorSurface {
               width: parent.width
               height: country.implicitHeight
+              foreground: root.fg
+              hasCursor: root.ruleAt("country")
+              onHasCursorChanged: if (hasCursor) root.showRuleRow(this)
               Text {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
@@ -815,9 +885,12 @@ Panel {
               }
             }
 
-            Item {
+            CursorSurface {
               width: parent.width
               height: ads.implicitHeight
+              foreground: root.fg
+              hasCursor: root.ruleAt("ads")
+              onHasCursorChanged: if (hasCursor) root.showRuleRow(this)
               Text {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
@@ -835,9 +908,12 @@ Panel {
               }
             }
 
-            Item {
+            CursorSurface {
               width: parent.width
               height: autoSwitch.implicitHeight
+              foreground: root.fg
+              hasCursor: root.ruleAt("auto")
+              onHasCursorChanged: if (hasCursor) root.showRuleRow(this)
               Text {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
@@ -876,7 +952,15 @@ Panel {
                   font.letterSpacing: 1.2
                 }
 
+                CursorSurface {
+                  width: domains.width
+                  height: field.height
+                  foreground: root.fg
+                  hasCursor: root.ruleAt("field", domains.modelData.list) && !field.activeFocus
+                  onHasCursorChanged: if (hasCursor) root.showRuleRow(this)
+
                 TextField {
+                  id: field
                   width: domains.width
                   height: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
                   leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
@@ -888,6 +972,11 @@ Panel {
                   font.pixelSize: Style.font.body
                   onAccepted: if (root.addDomain(domains.modelData.list, text)) text = ""
                   onActiveFocusChanged: if (activeFocus) root.editor = this; else if (root.editor === this) root.editor = null
+                  Connections {
+                    target: root
+                    function onFocusFieldRequested(list) { if (list === domains.modelData.list) field.forceActiveFocus() }
+                  }
+                }
                 }
 
                 // A list of its own scroll height, so new domains don't stretch the panel.
@@ -899,9 +988,13 @@ Panel {
                   boundsBehavior: Flickable.StopAtBounds
                   model: vpn.saved[domains.modelData.list]
                   QQC.ScrollBar.vertical: QQC.ScrollBar { policy: domainList.contentHeight > domainList.height ? QQC.ScrollBar.AlwaysOn : QQC.ScrollBar.AlwaysOff }
-                  delegate: Item {
+                  delegate: CursorSurface {
                     id: domainRow
                     required property string modelData
+                    required property int index
+                    foreground: root.fg
+                    hasCursor: root.ruleAt("domain", domains.modelData.list, modelData)
+                    onHasCursorChanged: if (hasCursor) { domainList.positionViewAtIndex(index, ListView.Contain); root.showRuleRow(this) }
                     width: domainList.width
                     height: Math.max(Style.space(32), domainText.implicitHeight + Style.spacing.xs * 2)
                     Text {
@@ -922,7 +1015,7 @@ Panel {
                       tooltipText: root.tr("Delete")
                       foreground: root.fg
                       fontFamily: root.fontFamily
-                      onClicked: root.commit(function(s) { return Model.removeDomain(s, domains.modelData.list, domainRow.modelData) }, true, null)
+                      onClicked: root.removeDomain(domains.modelData.list, domainRow.modelData)
                     }
                   }
                 }
