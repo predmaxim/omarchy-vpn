@@ -33,8 +33,8 @@ var TABLES = {
     "Switch to a working subscription": "Переключаться на рабочую подписку",
     "ALWAYS THROUGH VPN": "ВСЕГДА ЧЕРЕЗ VPN", "ALWAYS DIRECT": "ВСЕГДА НАПРЯМУЮ",
     "ONLY THROUGH VPN — PROGRAMS": "ТОЛЬКО ЧЕРЕЗ VPN — ПРОГРАММЫ", "Program…": "Программа…",
-    "The file name of the program or of its launcher (cursor, obsidian). Restart a running one.":
-      "Имя файла программы или её скрипта запуска (cursor, obsidian). Запущенную — перезапустить.",
+    "The file name of the program or of its launcher, not of a link to it (cursor, obsidian). Restart a running one.":
+      "Имя файла программы или её скрипта запуска, не ссылки на него (cursor, obsidian). Запущенную — перезапустить.",
     "Not a program name: %1": "Не имя программы: %1", "%1 runs the VPN itself": "%1 — часть самого VPN",
     "Could not protect the VPN-only programs": "Не удалось защитить программы «только через VPN»",
     "Check: systemctl status vpn-guard@%1": "Проверьте: systemctl status vpn-guard@%1",

@@ -954,7 +954,7 @@ Panel {
               model: [{ list: "proxyDomains", title: root.tr("ALWAYS THROUGH VPN"), placeholder: root.tr("Domain…") },
                       { list: "directDomains", title: root.tr("ALWAYS DIRECT"), placeholder: root.tr("Domain…") },
                       { list: "vpnApps", title: root.tr("ONLY THROUGH VPN — PROGRAMS"), placeholder: root.tr("Program…"),
-                        hint: root.tr("The file name of the program or of its launcher (cursor, obsidian). Restart a running one.") }]
+                        hint: root.tr("The file name of the program or of its launcher, not of a link to it (cursor, obsidian). Restart a running one.") }]
               delegate: Column {
                 id: domains
                 required property var modelData

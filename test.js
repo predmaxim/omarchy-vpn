@@ -213,6 +213,8 @@ const trEn = (t, ...a) => a.reduce((s, x, i) => s.split("%" + (i + 1)).join(x), 
 assert.strictEqual(M.view(M.patch(cs, { vpnApps: ["curl"] }), stt, true, false).kind, "unguarded")
 assert.strictEqual(M.view(M.patch(cs, { vpnApps: ["curl"] }), stt, false, false).kind, "down")
 assert.strictEqual(M.view(cs, stt, true, false).kind, "on")
+// the view without the guard (Status.linkView: retries, re-checks) never says unguarded
+assert.notStrictEqual(M.view(M.patch(cs, { vpnApps: ["curl"] }), stt, true).kind, "unguarded")
 assert.ok(M.isError({ kind: "unguarded" }))
 assert.strictEqual(M.tooltip({ kind: "unguarded" }, trEn), "VPN: programs are not protected — systemctl status vpn-guard@$USER")
 assert.strictEqual(M.tooltip({ kind: "on", name: "A", server: "B", delay: -1 }, trEn), "VPN: A · B · … ms")

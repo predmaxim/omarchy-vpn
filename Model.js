@@ -315,7 +315,7 @@ function removeDomain(state, list, domain) {
   return next
 }
 
-// A program's name, as the kernel sees it (comm): a launcher's path is cut to it.
+// A program's file name, a path cut to it. The guard matches the real file after links: a link's own name never matches.
 function normalizeApp(text) {
   var name = String(text).trim().split("/").pop()
   return /^[A-Za-z0-9._+-]{1,63}$/.test(name) ? name : ""
