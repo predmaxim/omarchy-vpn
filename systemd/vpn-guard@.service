@@ -16,7 +16,8 @@ RemainAfterExit=yes
 TimeoutStartSec=30s
 ExecStart=/usr/local/lib/omarchy-vpn/vpn-guard start %i
 ExecReload=/usr/local/lib/omarchy-vpn/vpn-guard start %i
-ExecStop=/usr/local/lib/omarchy-vpn/vpn-guard stop
+# Post, not ExecStop=: it also runs after a failed or timed-out start (man systemd.service)
+ExecStopPost=/usr/local/lib/omarchy-vpn/vpn-guard stop
 
 [Install]
 WantedBy=multi-user.target

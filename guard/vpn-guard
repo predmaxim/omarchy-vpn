@@ -42,7 +42,7 @@ key() {
 }
 
 start() {
-  local user=$1 name dump fail=0 k
+  local user=$1 name dump fail=0 k list
   local -A want=()
   if [[ ! $user =~ ^[a-z_][a-z0-9_-]*$ ]]; then
     echo "vpn-guard: invalid user name" >&2
@@ -74,15 +74,22 @@ NFT
     fi
   fi
 
-  # Add first, then remove the rest: a name that stays listed is never unguarded.
   # The list is read as the user; setpriv, not runuser: no PAM session, which at boot would wait on user@ (after the network).
   # At most 16 KB (256 names of 64 bytes): the user's path may be /dev/zero; a FIFO is cut by TimeoutStartSec.
+  # No file is an empty list; any other failure fails before the map is touched: never unguarded unseen.
+  # shellcheck disable=SC2016 # $1 is expanded by the user's bash, not here
+  if ! list=$(setpriv --reuid="$user" --regid="$(id -g "$user")" --init-groups --inh-caps=-all -- \
+    bash -c '[[ ! -e $1 ]] || exec head -c 16384 -- "$1"' vpn-guard "/home/$user/.config/mihomo/vpn-apps.txt"); then
+    echo "vpn-guard: cannot read ~/.config/mihomo/vpn-apps.txt of $user" >&2
+    exit 1
+  fi
+
+  # Add first, then remove the rest: a name that stays listed is never unguarded.
   while IFS= read -r name; do
     read -ra k <<<"$(key "$name")"
     want["${k[*]}"]=1
     bpftool map update pinned "$APPS" key hex "${k[@]}" value hex 01 || fail=1
-  done < <(setpriv --reuid="$user" --regid="$(id -g "$user")" --init-groups --inh-caps=-all -- \
-    head -c 16384 -- "/home/$user/.config/mihomo/vpn-apps.txt" 2>/dev/null | names)
+  done < <(printf '%s' "$list" | names)
 
   dump=$(bpftool -j map dump pinned "$APPS" | jq -r '.[].key | map(ltrimstr("0x")) | join(" ")') || exit 1
   while read -ra k; do
