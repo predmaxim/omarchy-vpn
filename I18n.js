@@ -6,6 +6,7 @@
 var TABLES = {
   ru: {
     "VPN service is not running": "Сервис VPN не запущен",
+    "VPN: programs are not protected — systemctl status vpn-guard@$USER": "VPN: программы не защищены — systemctl status vpn-guard@$USER",
     "VPN: no subscriptions": "VPN: нет подписок",
     "VPN is off": "VPN выключен",
     "VPN: no servers in %1": "VPN: в %1 нет серверов",

@@ -31,6 +31,8 @@ function defaults(secret) {
     // Bypass VPN. Ports: packets from them are kept out of TUN by the kernel.
     // Apps: DIRECT by process name in mihomo. Default — torrent clients.
     directPorts: [51413],
+    // Only through VPN: a kernel mark (vpn-guard) and a mihomo rule.
+    vpnApps: [],
     directApps: ["transmission-qt", "transmission-gtk", "transmission-daemon", "qbittorrent", "qbittorrent-nox"] }
 }
 
@@ -313,6 +315,30 @@ function removeDomain(state, list, domain) {
   return next
 }
 
+// A program's name, as the kernel sees it (comm): a launcher's path is cut to it.
+function normalizeApp(text) {
+  var name = String(text).trim().split("/").pop()
+  return /^[A-Za-z0-9._+-]{1,63}$/.test(name) ? name : ""
+}
+
+// mihomo and xray carry the VPN itself: marked, they would loop.
+function addApp(state, text) {
+  var name = normalizeApp(text)
+  if (!name) return { state: state, error: "invalid" }
+  if (name === "mihomo" || name === "xray") return { state: state, error: "reserved" }
+  if (state.vpnApps.indexOf(name) >= 0) return { state: state, error: "exists" }
+  var next = clone(state)
+  next.vpnApps.push(name)
+  next.directApps = next.directApps.filter(function(x) { return x !== name })
+  return { state: next, error: "" }
+}
+
+function removeApp(state, name) {
+  var next = clone(state)
+  next.vpnApps = next.vpnApps.filter(function(x) { return x !== name })
+  return next
+}
+
 function buildConfig(state) {
   var subs = state.subscriptions
   var providers = {}
@@ -340,6 +366,13 @@ function buildConfig(state) {
   var rules = state.directApps.map(function(a) { return "PROCESS-NAME," + a + ",DIRECT" })
   // Xray's own traffic to its servers comes back through TUN: out it goes, or it loops.
   if (subs.some(function(s) { return s.kind === "xray" })) rules.unshift("PROCESS-NAME,xray,DIRECT")
+  // First: the list wins over directApps. mihomo sees only "electron" for Electron
+  // programs, so without its rule their exceptions would go DIRECT by its socket, past the kernel.
+  if (state.vpnApps.length) {
+    var only = state.vpnApps.map(function(a) { return "PROCESS-NAME," + a + ",VPN" })
+    if (state.vpnApps.indexOf("electron") < 0) only.push("PROCESS-NAME,electron,VPN")
+    rules = only.concat(rules)
+  }
   state.proxyDomains.forEach(function(d) { rules.push("DOMAIN-SUFFIX," + d + ",VPN") })
   state.directDomains.forEach(function(d) { rules.push("DOMAIN-SUFFIX," + d + ",DIRECT") })
   PRIVATE.forEach(function(c) { rules.push("IP-CIDR," + c + ",DIRECT,no-resolve") })
@@ -362,7 +395,8 @@ function buildConfig(state) {
     // connection itself. The destination stays the IP: no second lookup.
     "sniffer": { "enable": true, "parse-pure-ip": true, "override-destination": false,
       "sniff": { "HTTP": { "ports": ["80", "8080-8880"] }, "TLS": { "ports": ["443", "8443"] }, "QUIC": { "ports": ["443", "8443"] } } },
-    "tun": { "enable": !!state.enabled && subs.length > 0, "stack": "gvisor", "auto-route": true,
+    // nftables vpn-guard relies on this device name.
+    "tun": { "enable": !!state.enabled && subs.length > 0, "device": "Meta", "stack": "gvisor", "auto-route": true,
       "auto-detect-interface": true, "dns-hijack": ["any:53"],
       "route-exclude-address": (country ? [CIDRS_MARK] : []).concat(PRIVATE), "exclude-src-port": state.directPorts },
     "proxy-providers": providers,
@@ -391,6 +425,7 @@ function files(state) {
       out.push({ path: "links/" + s.id + ".txt", data: JSON.stringify({ proxies: proxies }) + "\n" })
     }
   })
+  out.push({ path: "vpn-apps.txt", data: state.vpnApps.map(function(n) { return n + "\n" }).join("") })
   return out
 }
 
@@ -477,11 +512,12 @@ function status(configs, proxies, providers) {
     delay: history.length ? history[history.length - 1].delay : -1, counts: counts }
 }
 
-function view(state, st, apiUp) {
+function view(state, st, apiUp, guarded) {
   var id = st.group || state.active
   var sub = state.subscriptions.filter(function(s) { return s.id === id })[0]
   var v = { kind: "on", name: sub ? sub.name : "", server: st.server, delay: st.delay }
   if (!apiUp) v.kind = "down"
+  else if (guarded === false && state.vpnApps.length) v.kind = "unguarded"
   else if (!state.subscriptions.length) v.kind = "empty"
   else if (!st.tun) v.kind = "off"
   else if (!st.counts[st.group]) v.kind = "nosrv"
@@ -489,7 +525,7 @@ function view(state, st, apiUp) {
   return v
 }
 
-function isError(v) { return v.kind === "down" || v.kind === "nosrv" || v.kind === "dead" }
+function isError(v) { return v.kind === "down" || v.kind === "unguarded" || v.kind === "nosrv" || v.kind === "dead" }
 
 // Between states (an orange icon): a change being applied (busy), the server
 // not tested yet, or no servers / no answer while the quick retries still run.
@@ -503,6 +539,7 @@ function glyph(v) { return isError(v) ? GLYPHS.error : (v.kind === "on" ? GLYPHS
 
 function tooltip(v, tr) {
   if (v.kind === "down") return tr("VPN service is not running")
+  if (v.kind === "unguarded") return tr("VPN: programs are not protected — systemctl status vpn-guard@$USER")
   if (v.kind === "empty") return tr("VPN: no subscriptions")
   if (v.kind === "off") return tr("VPN is off")
   if (v.kind === "nosrv") return tr("VPN: no servers in %1", v.name)

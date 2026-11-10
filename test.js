@@ -4,7 +4,7 @@ const assert = require("assert")
 const src = fs.readFileSync(__dirname + "/Model.js", "utf8").replace(".pragma library", "")
 const M = new Function(src + `; return { defaults, load, randomSecret, clone, patch, idFor, classify, host,
   decodeTitle, splitResponse, urlSubscription, linksSubscription, addSubscription, removeSubscription, useSubscription,
-  setEnabled, normalizeDomain, addDomain, removeDomain, buildConfig, files, writerEnv, WRITE_SCRIPT, status, view, isError,
+  setEnabled, normalizeDomain, addDomain, removeDomain, normalizeApp, addApp, removeApp, buildConfig, files, writerEnv, WRITE_SCRIPT, status, view, isError,
   isConnecting, glyph, tooltip, retryDelay, TEST_URL, parseState }`)()
 
 // state.json: broken or partial files fall back to defaults field by field
@@ -109,7 +109,7 @@ let cfg = M.buildConfig(cs)
 assert.strictEqual(cfg["external-controller"], "127.0.0.1:9097")
 assert.strictEqual(cfg.secret, "sec")
 const PRIV = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16"]
-assert.deepStrictEqual(cfg.tun, { enable: true, stack: "gvisor", "auto-route": true, "auto-detect-interface": true, "dns-hijack": ["any:53"],
+assert.deepStrictEqual(cfg.tun, { enable: true, device: "Meta", stack: "gvisor", "auto-route": true, "auto-detect-interface": true, "dns-hijack": ["any:53"],
   "route-exclude-address": ["@country-cidrs"].concat(PRIV), "exclude-src-port": [51413] })
 assert.deepStrictEqual(cfg.dns, { enable: true, nameserver: ["system"] })
 // DNS goes past TUN: without sniffing no connection has a name, and no domain rule matches
@@ -145,7 +145,7 @@ assert.strictEqual(cfg.tun.enable, false)
 
 // files and the writer (runs the real sh script in a temp dir)
 const fl = M.files(cs)
-assert.deepStrictEqual(fl.map(f => f.path), ["state.json", "config.yaml", "links/s1.txt"])
+assert.deepStrictEqual(fl.map(f => f.path), ["state.json", "config.yaml", "links/s1.txt", "vpn-apps.txt"])
 assert.deepStrictEqual(JSON.parse(fl[0].data), cs)
 assert.strictEqual(fl[2].data, "hy2://p@h:443#Hy2-Main\n")
 const os = require("os"), path = require("path"), cp = require("child_process")
@@ -204,6 +204,12 @@ assert.strictEqual(M.glyph({ kind: "on" }), "\u{F059F}")
 for (const kind of ["off", "empty"]) assert.strictEqual(M.glyph({ kind }), "\u{F0A8E}")
 for (const kind of ["dead", "down", "nosrv"]) assert.strictEqual(M.glyph({ kind }), "\u{F1790}")
 const trEn = (t, ...a) => a.reduce((s, x, i) => s.split("%" + (i + 1)).join(x), t)
+// unguarded: only with programs listed, right after down
+assert.strictEqual(M.view(M.patch(cs, { vpnApps: ["curl"] }), stt, true, false).kind, "unguarded")
+assert.strictEqual(M.view(M.patch(cs, { vpnApps: ["curl"] }), stt, false, false).kind, "down")
+assert.strictEqual(M.view(cs, stt, true, false).kind, "on")
+assert.ok(M.isError({ kind: "unguarded" }))
+assert.strictEqual(M.tooltip({ kind: "unguarded" }, trEn), "VPN: programs are not protected — systemctl status vpn-guard@$USER")
 assert.strictEqual(M.tooltip({ kind: "on", name: "A", server: "B", delay: -1 }, trEn), "VPN: A · B · … ms")
 // a one-link subscription is named like its server: say it once
 assert.strictEqual(M.tooltip({ kind: "on", name: "A", server: "A", delay: 45 }, trEn), "VPN: A · 45 ms")
@@ -306,6 +312,29 @@ xs = M.addSubscription(xs, xsub).state
 xs = M.addSubscription(xs, Object.assign({}, xsub, { id: "sx2" })).state
 assert.deepStrictEqual(xs.subscriptions.map(s => s.port), [undefined, X.XRAY_PORT, X.XRAY_PORT + X.XRAY_BLOCK])
 assert.strictEqual(xsub.port, undefined)
+// VPN-only programs: a name, a launcher's name, never mihomo/xray
+assert.strictEqual(M.normalizeApp("  /usr/bin/obsidian \n"), "obsidian")
+assert.strictEqual(M.normalizeApp("Telegram"), "Telegram")
+assert.strictEqual(M.normalizeApp("my app"), "")
+assert.strictEqual(M.normalizeApp("x".repeat(64)), "")
+assert.strictEqual(M.addApp(M.defaults("k"), "mihomo").error, "reserved")
+assert.strictEqual(M.addApp(M.defaults("k"), "/usr/bin/xray").error, "reserved")
+assert.strictEqual(M.addApp(M.defaults("k"), "a b").error, "invalid")
+const va = M.addApp(M.defaults("k"), "qbittorrent").state
+assert.deepStrictEqual(va.vpnApps, ["qbittorrent"])
+assert.ok(va.directApps.indexOf("qbittorrent") < 0)
+assert.strictEqual(M.addApp(va, "qbittorrent").error, "exists")
+assert.deepStrictEqual(M.removeApp(va, "qbittorrent").vpnApps, [])
+// rules: the list first (before xray and directApps), then electron; electron once
+const vx = M.addApp(xs, "cursor").state
+const vr = M.buildConfig(vx).rules
+assert.deepStrictEqual(vr.slice(0, 3), ["PROCESS-NAME,cursor,VPN", "PROCESS-NAME,electron,VPN", "PROCESS-NAME,xray,DIRECT"])
+assert.strictEqual(M.buildConfig(M.addApp(vx, "electron").state).rules.filter(r => /,electron,/.test(r)).length, 1)
+assert.ok(!M.buildConfig(xs).rules.some(r => /,electron,/.test(r)))
+assert.strictEqual(M.buildConfig(xs).tun.device, "Meta")
+// the guard's list file: a name per line; empty when the list is
+assert.strictEqual(M.files(vx).find(f => f.path === "vpn-apps.txt").data, "cursor\n")
+assert.strictEqual(M.files(xs).find(f => f.path === "vpn-apps.txt").data, "")
 // Xray: every location behind a SOCKS port of its own, the API secret the password; tags by location
 const xc = X.xrayConfig(xs.subscriptions[1], "sec")
 assert.deepStrictEqual(xc.inbounds.map(i => [i.tag, i.listen, i.port]), [0, 1, 2, 3].map(i => [i + "-in", "127.0.0.1", X.XRAY_PORT + i]))
@@ -322,7 +351,7 @@ assert.ok(!("dns" in xc))
 assert.strictEqual(xs.subscriptions[1].locations[0].outbounds[0].tag, "de-1")
 // mihomo: a SOCKS server per location, named after it; Xray's own traffic goes direct
 const xfiles = M.files(xs)
-assert.deepStrictEqual(xfiles.map(f => f.path), ["state.json", "config.yaml", "links/sa.txt", "xray/" + xsub.id + ".json", "links/" + xsub.id + ".txt", "xray/sx2.json", "links/sx2.txt"])
+assert.deepStrictEqual(xfiles.map(f => f.path), ["state.json", "config.yaml", "links/sa.txt", "xray/" + xsub.id + ".json", "links/" + xsub.id + ".txt", "xray/sx2.json", "links/sx2.txt", "vpn-apps.txt"])
 assert.deepStrictEqual(JSON.parse(xfiles[3].data), xc)
 const xproxies = st => JSON.parse(M.files(st).find(f => f.path === "links/" + xsub.id + ".txt").data).proxies
 assert.deepStrictEqual(xproxies(xs)[1], { name: "🇳🇱 Amsterdam", type: "socks5", server: "127.0.0.1", port: X.XRAY_PORT + 1,
