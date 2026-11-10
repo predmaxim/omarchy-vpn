@@ -11,6 +11,9 @@ RequiresMountsFor=/home/%i
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# oneshot has no start timeout by default, and the network waits for this unit;
+# it also bounds reloads (man systemd.service)
+TimeoutStartSec=30s
 ExecStart=/usr/local/lib/omarchy-vpn/vpn-guard start %i
 ExecReload=/usr/local/lib/omarchy-vpn/vpn-guard start %i
 ExecStop=/usr/local/lib/omarchy-vpn/vpn-guard stop

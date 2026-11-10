@@ -76,12 +76,13 @@ NFT
 
   # Add first, then remove the rest: a name that stays listed is never unguarded.
   # The list is read as the user; setpriv, not runuser: no PAM session, which at boot would wait on user@ (after the network).
+  # At most 16 KB (256 names of 64 bytes): the user's path may be /dev/zero; a FIFO is cut by TimeoutStartSec.
   while IFS= read -r name; do
     read -ra k <<<"$(key "$name")"
     want["${k[*]}"]=1
     bpftool map update pinned "$APPS" key hex "${k[@]}" value hex 01 || fail=1
   done < <(setpriv --reuid="$user" --regid="$(id -g "$user")" --init-groups --inh-caps=-all -- \
-    cat "/home/$user/.config/mihomo/vpn-apps.txt" 2>/dev/null | names)
+    head -c 16384 -- "/home/$user/.config/mihomo/vpn-apps.txt" 2>/dev/null | names)
 
   dump=$(bpftool -j map dump pinned "$APPS" | jq -r '.[].key | map(ltrimstr("0x")) | join(" ")') || exit 1
   while read -ra k; do

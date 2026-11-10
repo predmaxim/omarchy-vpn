@@ -34,8 +34,9 @@ systemctl --user daemon-reload
 # VPN-only programs only:
 sudo pacman -S --needed bpf clang libbpf jq
 cd ~/.config/omarchy/plugins/predmaxim.vpn
-clang -O2 -g -target bpf -c guard/vpn-guard.bpf.c -o /tmp/vpn-guard.bpf.o
-sudo install -Dm644 /tmp/vpn-guard.bpf.o /usr/local/lib/omarchy-vpn/vpn-guard.bpf.o
+o=$(mktemp -d)/vpn-guard.bpf.o   # your own directory: root installs what is built here
+clang -O2 -g -target bpf -c guard/vpn-guard.bpf.c -o "$o"
+sudo install -Dm644 "$o" /usr/local/lib/omarchy-vpn/vpn-guard.bpf.o
 sudo install -Dm755 guard/vpn-guard /usr/local/lib/omarchy-vpn/vpn-guard
 sudo install -Dm644 systemd/vpn-guard@.service /etc/systemd/system/vpn-guard@.service
 sudo install -Dm644 systemd/50-mihomo-restart.rules /etc/polkit-1/rules.d/50-mihomo-restart.rules
