@@ -34,7 +34,8 @@ done
 
 failed=0
 run() { # run <program> [args...]: as the user, the exit code of curl
-  runuser -u "$U" -- "$D/$1" "${@:2}" -s -m 10 -o /dev/null https://ifconfig.me/ip
+  setpriv --reuid="$U" --regid="$(id -g "$U")" --init-groups --inh-caps=-all -- \
+    "$D/$1" "${@:2}" -s -m 10 -o /dev/null https://ifconfig.me/ip
 }
 check() { # check <pass|block> <what> <exit code>
   if [[ $1 == pass && $3 == 0 || $1 == block && $3 != 0 ]]; then
