@@ -1,0 +1,104 @@
+#!/bin/bash
+
+# predmaxim.vpn, programs only through VPN, the root part: vpn-guard@<user>.service runs it.
+# Installed in /usr/local/lib/omarchy-vpn/ next to vpn-guard.bpf.o: root loads nothing from
+# the user's folders. Design: omarchy-dotfiles docs/superpowers/specs/2026-11-10-vpn-only-apps-design.md
+#
+#   vpn-guard start <user>  nftables, eBPF programs, the user's list; start and reload alike
+#   vpn-guard stop          remove all of it
+#   vpn-guard names         stdin: the user's list; stdout: its valid names, one per line
+
+set -uo pipefail
+export LC_ALL=C # names are checked byte by byte, not by the locale's ranges
+
+PIN=/sys/fs/bpf/vpn-guard
+APPS=$PIN/maps/apps
+
+usage() {
+  echo "Usage: vpn-guard start <user> | stop | names" >&2
+  exit 2
+}
+
+# The list is the user's file: pass valid names only, never print the rest.
+# mihomo and xray carry the VPN itself: marked, the whole machine would lose it.
+names() {
+  local line skipped=0
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%$'\r'}
+    if [[ $line =~ ^[A-Za-z0-9._+-]{1,63}$ && $line != mihomo && $line != xray ]]; then
+      printf '%s\n' "$line"
+    else
+      ((++skipped))
+    fi
+  done
+  if ((skipped)); then
+    echo "vpn-guard: skipped $skipped invalid names" >&2
+  fi
+}
+
+# A key of the apps map: the name padded with zeros to 64 bytes, in hex.
+key() {
+  { printf '%s' "$1"; head -c 64 /dev/zero; } | head -c 64 | od -An -v -tx1 -w64
+}
+
+start() {
+  local user=$1 name dump fail=0 k
+  local -A want=()
+  if [[ ! $user =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    echo "vpn-guard: invalid user name" >&2
+    exit 2
+  fi
+
+  # One transaction: the table is replaced, never missing or empty in between.
+  nft -f - <<'NFT' || exit 1
+table inet vpn_guard
+delete table inet vpn_guard
+table inet vpn_guard {
+  chain out {
+    type filter hook output priority 0; policy accept;
+    meta mark & 0x10000000 == 0 accept
+    oifname { "lo", "Meta" } accept
+    ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } accept
+    counter reject with icmpx admin-prohibited
+  }
+}
+NFT
+
+  # Loaded already: leave the programs alone, the tags of running programs live in their map.
+  if [[ ! -e $PIN/mark_vpn_only ]]; then
+    if ! mkdir -p "$PIN/maps" ||
+      ! bpftool prog loadall "$(dirname "$(realpath "$0")")/vpn-guard.bpf.o" "$PIN" pinmaps "$PIN/maps" autoattach ||
+      ! bpftool cgroup attach /sys/fs/cgroup sock_create pinned "$PIN/mark_vpn_only" multi; then
+      stop
+      exit 1
+    fi
+  fi
+
+  # Add first, then remove the rest: a name that stays listed is never unguarded.
+  while IFS= read -r name; do
+    read -ra k <<<"$(key "$name")"
+    want["${k[*]}"]=1
+    bpftool map update pinned "$APPS" key hex "${k[@]}" value hex 01 || fail=1
+  done < <(runuser -u "$user" -- cat "/home/$user/.config/mihomo/vpn-apps.txt" 2>/dev/null | names)
+
+  dump=$(bpftool -j map dump pinned "$APPS" | jq -r '.[].key | map(ltrimstr("0x")) | join(" ")') || exit 1
+  while read -ra k; do
+    if ((${#k[@]})) && [[ -z ${want["${k[*]}"]-} ]]; then
+      bpftool map delete pinned "$APPS" key hex "${k[@]}" || fail=1
+    fi
+  done <<<"$dump"
+  return $fail
+}
+
+stop() {
+  bpftool cgroup detach /sys/fs/cgroup sock_create pinned "$PIN/mark_vpn_only" 2>/dev/null
+  nft delete table inet vpn_guard 2>/dev/null
+  rm -rf "$PIN" # the LSM programs' links go with their pins
+}
+
+case ${1-} in
+start) start "${2-}" ;;
+stop) stop ;;
+names) names ;;
+*) usage ;;
+esac

@@ -1,0 +1,19 @@
+# /etc/systemd/system/vpn-guard@.service
+# predmaxim.vpn: programs in ~/.config/mihomo/vpn-apps.txt of %i go out only
+# through mihomo's TUN, held by the kernel (eBPF tag + nftables). Up before the
+# network; the widget reloads it after a change of the list.
+[Unit]
+Description=VPN-only programs for %i (predmaxim.vpn)
+Before=network-pre.target
+Wants=network-pre.target
+RequiresMountsFor=/home/%i
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/omarchy-vpn/vpn-guard start %i
+ExecReload=/usr/local/lib/omarchy-vpn/vpn-guard start %i
+ExecStop=/usr/local/lib/omarchy-vpn/vpn-guard stop
+
+[Install]
+WantedBy=multi-user.target

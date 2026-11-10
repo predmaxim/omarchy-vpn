@@ -167,6 +167,11 @@ assert.ok(!fs.existsSync(dir + "/config.yaml.tmp"))
 assert.strictEqual(fs.statSync(dir + "/state.json").mode & 0o777, 0o600)
 fs.rmSync(dir, { recursive: true })
 
+// vpn-guard takes only valid names from the user's file; never prints the rest
+const names = cp.execFileSync("bash", [__dirname + "/guard/vpn-guard", "names"],
+  { input: "curl\n/usr/bin/x\n\nmihomo\nxray\nmy app\nobsidian\r\n" + "y".repeat(64) + "\n", stdio: ["pipe", "pipe", "ignore"] }).toString()
+assert.strictEqual(names, "curl\nobsidian\n")
+
 // status from GET /configs and GET /proxies
 // Servers of a provider are not in /proxies: their test history comes from /providers/proxies.
 const proxies = { proxies: {

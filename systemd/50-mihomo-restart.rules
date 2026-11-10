@@ -1,9 +1,11 @@
 // /etc/polkit-1/rules.d/50-mihomo-restart.rules
-// The widget applies a new config by restarting mihomo: let a local, active
-// user restart their own mihomo@<user> unit without a password — nothing else.
+// The widget applies a new config by restarting mihomo, and a new list of
+// VPN-only programs by reloading vpn-guard: let a local, active user restart
+// their own mihomo@<user> and reload their own vpn-guard@<user> without a
+// password — nothing else.
 polkit.addRule(function(action, subject) {
-  if (action.id == "org.freedesktop.systemd1.manage-units" &&
-      action.lookup("unit") == "mihomo@" + subject.user + ".service" &&
-      action.lookup("verb") == "restart" && subject.local && subject.active)
+  if (action.id == "org.freedesktop.systemd1.manage-units" && subject.local && subject.active &&
+      (action.lookup("unit") == "mihomo@" + subject.user + ".service" && action.lookup("verb") == "restart" ||
+       action.lookup("unit") == "vpn-guard@" + subject.user + ".service" && action.lookup("verb") == "reload"))
     return polkit.Result.YES
 })
