@@ -409,7 +409,7 @@ Panel {
   // Retries (spec "Повторы"): a dead current server — re-test its group; an
   // empty subscription — re-download it. 5 s, 15 s, 60 s, then every 5 min.
   function checkRetry() {
-    var kind = vpn.view.kind
+    var kind = vpn.linkView.kind
     if (kind !== "dead" && kind !== "nosrv") { root.retryAttempt = 0; retryTimer.stop(); return }
     if (!retryTimer.running) { retryTimer.interval = Model.retryDelay(root.retryAttempt); retryTimer.start() }
   }
@@ -423,7 +423,7 @@ Panel {
   function recheck(done) {
     var group = vpn.st.group
     if (!group) { if (done) done(); return }
-    if (vpn.view.kind === "nosrv") vpn.call("PUT", "/providers/proxies/" + group, null, done)
+    if (vpn.linkView.kind === "nosrv") vpn.call("PUT", "/providers/proxies/" + group, null, done)
     else root.testGroup(group, done)
   }
 

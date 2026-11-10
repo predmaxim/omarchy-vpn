@@ -27,6 +27,8 @@ Item {
   property bool guardFailed: false
   readonly property bool guarded: guardActive && !guardFailed
   readonly property var view: Model.view(saved, st, apiUp, guarded)
+  // The connection alone, guard aside: retries and re-checks decide by it.
+  readonly property var linkView: Model.view(saved, st, apiUp)
 
   signal polled()
   signal loadedFile()
@@ -83,7 +85,8 @@ Item {
   Process {
     id: guardCheck
     command: ["systemctl", "is-active", "--quiet", "vpn-guard@" + Quickshell.env("USER") + ".service"]
-    onExited: function(code) { root.guardActive = code === 0 }
+    // A failed reload is remembered only while the unit stays active: down, it shows anyway, and a start re-reads the list.
+    onExited: function(code) { root.guardActive = code === 0; if (code !== 0) root.guardFailed = false }
   }
 
   Timer { interval: 5000; running: true; repeat: true; onTriggered: root.poll() }
