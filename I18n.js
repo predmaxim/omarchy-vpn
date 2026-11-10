@@ -32,6 +32,12 @@ var TABLES = {
     "Russia": "Россия", "Don't use": "Не использовать", "Block ads": "Блокировать рекламу",
     "Switch to a working subscription": "Переключаться на рабочую подписку",
     "ALWAYS THROUGH VPN": "ВСЕГДА ЧЕРЕЗ VPN", "ALWAYS DIRECT": "ВСЕГДА НАПРЯМУЮ",
+    "ONLY THROUGH VPN — PROGRAMS": "ТОЛЬКО ЧЕРЕЗ VPN — ПРОГРАММЫ", "Program…": "Программа…",
+    "The file name of the program or of its launcher (cursor, obsidian). Restart a running one.":
+      "Имя файла программы или её скрипта запуска (cursor, obsidian). Запущенную — перезапустить.",
+    "Not a program name: %1": "Не имя программы: %1", "%1 runs the VPN itself": "%1 — часть самого VPN",
+    "Could not protect the VPN-only programs": "Не удалось защитить программы «только через VPN»",
+    "Check: systemctl status vpn-guard@%1": "Проверьте: systemctl status vpn-guard@%1",
     "ADD SUBSCRIPTION": "ДОБАВИТЬ ПОДПИСКУ",
     "VPN did not start": "VPN не запустился", "VPN settings file is damaged": "Файл настроек VPN повреждён",
     "Fix or delete %1": "Исправьте или удалите %1", "See: journalctl -u mihomo@%1": "Смотрите: journalctl -u mihomo@%1"

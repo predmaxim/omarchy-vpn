@@ -44,7 +44,7 @@ Panel {
   // Rules page rows for the keyboard, in screen order; cursor indexes them there.
   readonly property var ruleRows: {
     var rows = [{ kind: "country" }, { kind: "ads" }, { kind: "auto" }]
-    ;["proxyDomains", "directDomains"].forEach(function(list) {
+    ;["proxyDomains", "directDomains", "vpnApps"].forEach(function(list) {
       rows.push({ kind: "field", list: list })
       ;(vpn.saved[list] || []).forEach(function(d) { rows.push({ kind: "domain", list: list, value: d }) })
     })
@@ -108,6 +108,21 @@ Panel {
     if (code !== 0) { root.done(); root.notify(root.tr("Could not save VPN settings"), ""); return }
     // A first run may have found another widget's state.json: read the file back.
     if (p.options.firstRun) vpn.reread(); else vpn.saved = p.next
+    // The guard re-reads the list before mihomo restarts: a new program is shut out during the restart too.
+    if (JSON.stringify(p.prev.vpnApps) !== JSON.stringify(p.next.vpnApps)) guardReloader.running = true
+    else root.startXray()
+  }
+
+  // A failed reload is no reason to stop: the rest of the change still goes in.
+  function guardReloaded(code) {
+    vpn.guardFailed = code !== 0
+    if (code !== 0) root.notify(root.tr("Could not protect the VPN-only programs"), root.tr("Check: systemctl status vpn-guard@%1", Quickshell.env("USER")))
+    vpn.checkGuard()
+    root.startXray()
+  }
+
+  function startXray() {
+    var p = root.pending
     var x = Model.xrayChanges(p.prev, p.next)
     if (!x.restart.length && !x.stop.length) { root.applied(); return }
     xrayctl.command = ["sh", "-c", xrayctl.script, "sh", x.restart.join(" "), x.stop.join(" ")]
@@ -256,7 +271,7 @@ Panel {
     else if (y + item.height > rulesTab.contentY + rulesTab.height) rulesTab.contentY = y + item.height - rulesTab.height
   }
   function removeDomain(list, domain) {
-    root.commit(function(s) { return Model.removeDomain(s, list, domain) }, true, null)
+    root.commit(function(s) { return list === "vpnApps" ? Model.removeApp(s, domain) : Model.removeDomain(s, list, domain) }, true, null)
   }
   function activateAdd() {
     if (root.addCol === 0) paste.running = true
@@ -378,10 +393,16 @@ Panel {
     qrDelay.start()
   }
 
+  // A rules list's field: a domain, or a program for vpnApps.
   function addDomain(list, text) {
-    var r = Model.addDomain(vpn.saved, list, text)
-    if (r.error === "invalid") { root.notify(root.tr("Not a domain: %1", text.trim()), ""); return false }
-    if (!r.error) root.commit(function(s) { return Model.addDomain(s, list, text).state }, true, null)
+    var add = list === "vpnApps" ? function(s) { return Model.addApp(s, text) } : function(s) { return Model.addDomain(s, list, text) }
+    var r = add(vpn.saved)
+    if (r.error === "invalid") {
+      root.notify(list === "vpnApps" ? root.tr("Not a program name: %1", text.trim()) : root.tr("Not a domain: %1", text.trim()), "")
+      return false
+    }
+    if (r.error === "reserved") { root.notify(root.tr("%1 runs the VPN itself", Model.normalizeApp(text)), ""); return false }
+    if (!r.error) root.commit(function(s) { return add(s).state }, true, null)
     return true
   }
 
@@ -421,6 +442,13 @@ Panel {
     id: restarter
     command: ["systemctl", "--no-ask-password", "restart", "mihomo@" + Quickshell.env("USER") + ".service"]
     onExited: function(code) { root.restarted(code) }
+  }
+
+  // polkit lets the user only reload their own vpn-guard@ unit (systemd/50-mihomo-restart.rules).
+  Process {
+    id: guardReloader
+    command: ["systemctl", "--no-ask-password", "reload", "vpn-guard@" + Quickshell.env("USER") + ".service"]
+    onExited: function(code) { root.guardReloaded(code) }
   }
 
   Process {
@@ -472,7 +500,7 @@ Panel {
     onExited: function(code) { if (code === 0) root.refreshed(refresher.subId, refresher.text) }
   }
 
-  Timer { interval: 60000; running: true; repeat: true; onTriggered: root.refreshDue() }
+  Timer { interval: 60000; running: true; repeat: true; onTriggered: { root.refreshDue(); vpn.checkGuard() } }
 
   Process {
     id: paste
@@ -921,10 +949,12 @@ Panel {
 
             PanelSeparator { foreground: root.fg }
 
-            // Two rule lists: caption, a borderless field (Enter adds), domains with ✕.
+            // Three rule lists: caption, a borderless field (Enter adds), entries with ✕.
             Repeater {
-              model: [{ list: "proxyDomains", title: root.tr("ALWAYS THROUGH VPN") },
-                      { list: "directDomains", title: root.tr("ALWAYS DIRECT") }]
+              model: [{ list: "proxyDomains", title: root.tr("ALWAYS THROUGH VPN"), placeholder: root.tr("Domain…") },
+                      { list: "directDomains", title: root.tr("ALWAYS DIRECT"), placeholder: root.tr("Domain…") },
+                      { list: "vpnApps", title: root.tr("ONLY THROUGH VPN — PROGRAMS"), placeholder: root.tr("Program…"),
+                        hint: root.tr("The file name of the program or of its launcher (cursor, obsidian). Restart a running one.") }]
               delegate: Column {
                 id: domains
                 required property var modelData
@@ -940,6 +970,16 @@ Panel {
                   font.letterSpacing: 1.2
                 }
 
+                Text {
+                  visible: !!domains.modelData.hint
+                  width: domains.width
+                  wrapMode: Text.WordWrap
+                  text: domains.modelData.hint || ""
+                  color: root.muted
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
                 CursorSurface {
                   width: domains.width
                   height: field.height
@@ -953,7 +993,7 @@ Panel {
                   height: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
                   leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
                   background: null
-                  placeholderText: root.tr("Domain…")
+                  placeholderText: domains.modelData.placeholder
                   placeholderTextColor: Util.alpha(root.fg, 0.58)
                   foreground: root.fg
                   font.family: root.fontFamily

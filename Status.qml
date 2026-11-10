@@ -21,7 +21,12 @@ Item {
   // then don't count.
   property bool quiet: false
   readonly property bool apiUp: failures < 3
-  readonly property var view: Model.view(saved, st, apiUp)
+  // VPN-only programs: their kernel guard (vpn-guard@<user>) is up. A failed
+  // reload may leave the unit active, so Panel keeps that failure in guardFailed.
+  property bool guardActive: true
+  property bool guardFailed: false
+  readonly property bool guarded: guardActive && !guardFailed
+  readonly property var view: Model.view(saved, st, apiUp, guarded)
 
   signal polled()
   signal loadedFile()
@@ -33,6 +38,12 @@ Item {
   }
 
   function fail() { if (!root.quiet) root.failures++ }
+
+  // Asked only while programs are listed: without them the guard is not needed.
+  function checkGuard() {
+    if (!root.saved.vpnApps.length) root.guardActive = true
+    else guardCheck.running = true
+  }
 
   function poll() {
     if (!root.loaded || !root.saved.secret) return
@@ -64,8 +75,15 @@ Item {
       root.loaded = true
       root.loadedFile()
       root.poll()
+      root.checkGuard()
     }
     onLoadFailed: { root.missing = true; root.loaded = true }
+  }
+
+  Process {
+    id: guardCheck
+    command: ["systemctl", "is-active", "--quiet", "vpn-guard@" + Quickshell.env("USER") + ".service"]
+    onExited: function(code) { root.guardActive = code === 0 }
   }
 
   Timer { interval: 5000; running: true; repeat: true; onTriggered: root.poll() }
