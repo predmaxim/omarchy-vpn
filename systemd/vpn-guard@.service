@@ -1,9 +1,11 @@
 # /etc/systemd/system/vpn-guard@.service
 # predmaxim.vpn: networks in ~/.config/mihomo/vpn-addresses.txt of %i are reached
-# only through mihomo's TUN, held by nftables. Up before the network; the widget
-# reloads it after a change of the list.
+# only through mihomo's TUN, held by nftables; names in vpn-domains.txt are resolved
+# only through it (systemd-resolved's global DNS, held the same way). Up before the
+# network, after resolved (it reloads it); the widget reloads it after a change.
 [Unit]
-Description=VPN-only addresses for %i (predmaxim.vpn)
+Description=Always through VPN for %i: addresses and DNS (predmaxim.vpn)
+After=systemd-resolved.service
 Before=network-pre.target
 Wants=network-pre.target
 RequiresMountsFor=/home/%i

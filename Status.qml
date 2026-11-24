@@ -41,10 +41,10 @@ Item {
 
   function fail() { if (!root.quiet) root.failures++ }
 
-  // Asked only while addresses are listed: without them the guard is not needed.
+  // Asked always: a domain change reloads the guard only when it is there. The globe turns
+  // red only while addresses are listed (Model.view): domains do without the guard.
   function checkGuard() {
-    if (!root.saved.vpnAddresses.length) root.guardActive = true
-    else guardCheck.running = true
+    guardCheck.running = true
   }
 
   function poll() {

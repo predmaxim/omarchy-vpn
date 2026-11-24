@@ -475,7 +475,9 @@ function files(state) {
       out.push({ path: "links/" + s.id + ".txt", data: JSON.stringify({ proxies: proxies }) + "\n" })
     }
   })
+  // The guard's lists: addresses into nftables, "always through VPN" domains' DNS through the VPN.
   out.push({ path: "vpn-addresses.txt", data: state.vpnAddresses.map(function(c) { return c + "\n" }).join("") })
+  out.push({ path: "vpn-domains.txt", data: state.proxyDomains.map(function(d) { return d + "\n" }).join("") })
   return out
 }
 

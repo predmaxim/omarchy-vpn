@@ -54,6 +54,41 @@ else
   echo "SKIP  api.anthropic.com: its address is not in your list"
 fi
 
+# The DNS of "always through VPN" domains: resolved asks the global server only, held to TUN.
+D=$(setpriv --reuid="$U" --regid="$(id -g "$U")" --init-groups -- head -n1 "/home/$U/.config/mihomo/vpn-domains.txt" 2>/dev/null)
+if [[ -n $D ]]; then
+  if resolvectl dns | grep '^Global:' | grep -q '9\.9\.9\.9:9953'; then
+    echo "PASS  resolved's global DNS is 9.9.9.9:9953"
+  else
+    echo "FAIL  resolved's global DNS is not 9.9.9.9:9953 (resolvectl dns)"
+    ((++failed))
+  fi
+  resolvectl flush-caches
+  if resolvectl query -4 --cache=no "$D" >/dev/null 2>&1; then
+    echo "PASS  $D resolves (through the VPN)"
+  else
+    echo "FAIL  $D does not resolve"
+    ((++failed))
+  fi
+  if python3 - "$IF" <<'PY'; then
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, sys.argv[1].encode())
+try:
+    s.sendto(b"x", ("9.9.9.9", 9953))
+except PermissionError:
+    sys.exit(0)
+sys.exit(1)
+PY
+    echo "PASS  the DNS server through $IF: refused"
+  else
+    echo "FAIL  the DNS server through $IF: let out"
+    ((++failed))
+  fi
+else
+  echo "SKIP  DNS: no domains in ALWAYS THROUGH VPN"
+fi
+
 # A test address added for a moment: refused past the VPN, free again after a reload.
 T=$(getent ahostsv4 ifconfig.me | awk '{print $1; exit}')
 if listed "$T"; then

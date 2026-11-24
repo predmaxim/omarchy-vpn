@@ -12,7 +12,7 @@ An Omarchy shell plugin that runs your VPN through [mihomo](https://github.com/M
   - IPv6 to them is always refused: mihomo carries no IPv6 (`ipv6: false`), so apps fall back to IPv4 at once;
   - an address in the country's networks (sent past TUN) stays unreachable, VPN or not; private networks stay open whatever the list says;
   - never list your VPN servers: mihomo reaches them past TUN, and the guard would cut the VPN off;
-  - DNS queries for their names still go to the router's DNS, past the VPN.
+  - name lookups: a domain in "always through VPN" (`anthropic.com`, its subdomains too) is resolved only through the VPN, by `vpn-guard`: systemd-resolved asks a global DNS server of its own for it, Quad9 `9.9.9.9:9953`, which the table holds to TUN like a listed address (not port 53: mihomo answers any `:53` entering TUN itself, through the system's DNS — a loop). While the VPN is down such names don't resolve. resolved asks that server about other names too, along with the router, and keeps the first answer (man systemd-resolved, "Protocols and Routing"); the router, nearer, usually wins. Containers ask Docker's DNS, which goes to the router past resolved.
 - **Bypass, in `state.json` for now** — `directPorts` (default `[51413]`, Transmission's peer port) and `directApps` (default: Transmission and qBittorrent). Packets from those ports never enter TUN; those apps go `DIRECT` by process name. That is how torrents stay off the VPN.
 
 No logs, server picker (beyond locations) or other settings in the UI on purpose.
@@ -48,7 +48,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now vpn-guard@$USER
 
 `override.conf` makes the packaged `mihomo@.service` run as you on `~/.config/mihomo` with only the network capabilities TUN needs (the packaged unit runs as root on `/etc/mihomo` with far more), and restarts it forever if it exits. `50-mihomo-restart.rules` lets you (local, active session) restart your own `mihomo@<you>` unit and reload your own `vpn-guard@<you>` without a password, and nothing else: that is how the widget applies a change. `mihomo-xray@.service` is a user unit: one Xray per subscription with locations, which the widget enables, restarts and stops itself.
 
-`vpn-guard`, run as root by `vpn-guard@<you>.service` at boot (before the network) and on the widget's reload, reads `~/.config/mihomo/vpn-addresses.txt` (as you, at most 64 KB; lines other than an address with its `/prefix`, or wider than `/8`, `/16`, skipped; no file is an empty list) and replaces the `nftables` table `inet vpn_guard` in one transaction. A file it cannot read, or a network `nft` refuses, fails the start or reload, and a failed reload leaves the table as it was. It is root's copy in `/usr/local/lib/omarchy-vpn/`: root runs nothing from the plugin's folder, which you can write to. So `git pull` does not update it: when `guard/` or `systemd/` change, repeat the steps above and `sudo systemctl reload vpn-guard@$USER`.
+`vpn-guard`, run as root by `vpn-guard@<you>.service` at boot (before the network) and on the widget's reload, reads `~/.config/mihomo/vpn-domains.txt` (the "always through VPN" domains) into `/run/systemd/resolved.conf.d/50-vpn-guard.conf` (removed when there are none; resolved reloaded, its cache dropped), and `~/.config/mihomo/vpn-addresses.txt` (as you, at most 64 KB; lines other than an address with its `/prefix`, or wider than `/8`, `/16`, skipped; no file is an empty list) and replaces the `nftables` table `inet vpn_guard` in one transaction. A file it cannot read, or a network `nft` refuses, fails the start or reload, and a failed reload leaves the table as it was. It is root's copy in `/usr/local/lib/omarchy-vpn/`: root runs nothing from the plugin's folder, which you can write to. So `git pull` does not update it: when `guard/` or `systemd/` change, repeat the steps above and `sudo systemctl reload vpn-guard@$USER`.
 
 ## How it works
 
@@ -81,6 +81,6 @@ omarchy-shell predmaxim.vpn-ctl add '<text>'  # add a subscription URL or links
 
 ```bash
 node test.js
-guard/test.sh         # vpn-guard's table in a network namespace of its own: no root, the machine's network untouched
+guard/test.sh         # vpn-guard in namespaces of its own (network, /run, /home): no root, the machine's network and DNS untouched
 sudo guard/check.sh   # vpn-guard installed and active, VPN on: real connections, PASS or FAIL per check
 ```

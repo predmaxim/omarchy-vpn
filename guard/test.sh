@@ -1,15 +1,16 @@
 #!/bin/bash
 
-# vpn-guard's table, without root and without the machine's network: guard/test.sh
-# runs itself again in a network namespace of its own (unshare -rn) with two dummy
-# devices, an uplink "wlan" and the TUN "Meta". Nothing answers there: a rejected
-# connection fails at once (curl exit 7), one the guard lets out times out (exit 28).
+# vpn-guard, without root and without the machine's network or DNS: guard/test.sh runs
+# itself again in namespaces of its own (unshare -rnm): two dummy devices, an uplink
+# "wlan" and the TUN "Meta"; /run/systemd and /home on tmpfs; systemctl, resolvectl and
+# setpriv stand-ins that log their calls. Nothing answers there: a rejected connection
+# fails at once (curl exit 7), one the guard lets out times out (exit 28).
 # PASS or FAIL per check; the exit code is the number of failures.
 
 set -uo pipefail
 G=$(dirname "$(realpath "$0")")/vpn-guard
 if [[ ${1-} != --inside ]]; then
-  exec unshare -rn "$0" --inside
+  REAL_USER=$(id -un) exec unshare -rnm "$0" --inside
 fi
 
 failed=0
@@ -62,7 +63,70 @@ check "and the table stays as it was" 7 "$(conn 160.79.104.10)"
 printf '' | "$G" ruleset | nft -f -
 check "an empty list loads" 0 $?
 check "and lets everything out" 28 "$(conn 160.79.104.10)"
-"$G" stop
-check "stop removes the table" 1 "$(nft list table inet vpn_guard >/dev/null 2>&1; echo $?)"
+
+# DNS of the domains: resolved's drop-in (resolved itself is not here), its server held.
+conf=$(printf 'anthropic.com\nclaude.ai\r\nfoo\nx.com; DNS=1.1.1.1\n%s.com\n\n' "$(printf 'a%.0s' {1..64})" | "$G" resolved 2>/dev/null)
+check "resolved's drop-in: the domains, route-only, to the server through the VPN" \
+  $'# vpn-guard: the DNS of "always through VPN" goes through the VPN\n[Resolve]\nDNS=9.9.9.9:9953\nDomains=~anthropic.com ~claude.ai' "$conf"
+check "no domains, no drop-in" "" "$(printf '' | "$G" resolved)"
+printf '' | "$G" ruleset --dns | nft -f -
+check "with domains the DNS server is held: past the VPN refused" 1 "$(python3 -c 'import socket; s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try: s.sendto(b"x", ("9.9.9.9", 9953))
+except PermissionError: exit(1)' 2>/dev/null; echo $?)"
+printf '' | "$G" ruleset | nft -f -
+check "without them it is free" 28 "$(conn 9.9.9.9)"
+
+
+# start and stop as the unit runs them, on this namespace's /run and /home only.
+STUB=$(mktemp -d)
+cp "$G" "$STUB/vpn-guard" && G=$STUB/vpn-guard # /home goes under tmpfs, this repo with it
+mount -t tmpfs tmpfs /run/systemd && mount -t tmpfs tmpfs /home || exit 1
+export LOG=$STUB/log STATE=running
+# shellcheck disable=SC2016 # expanded by the stand-ins
+printf '#!/bin/bash\necho "systemctl $*" >>"$LOG"\n[[ $1 == is-system-running ]] && echo "$STATE"\nexit "${SYSTEMCTL_EXIT:-0}"\n' >"$STUB/systemctl"
+printf '#!/bin/bash\necho "resolvectl $*" >>"$LOG"\n' >"$STUB/resolvectl"
+printf '#!/bin/bash\nwhile [[ $1 != -- ]]; do shift; done\nshift\nexec "$@"\n' >"$STUB/setpriv" # no other user here
+chmod 755 "$STUB"/*
+export PATH=$STUB:$PATH
+M=/home/$REAL_USER/.config/mihomo
+D=/run/systemd/resolved.conf.d/50-vpn-guard.conf
+mkdir -p "$M"
+reloads() { grep -c 'try-reload-or-restart systemd-resolved' "$LOG" 2>/dev/null; }
+
+printf '160.79.104.0/23\n' >"$M/vpn-addresses.txt"
+printf 'anthropic.com\nclaude.ai\n' >"$M/vpn-domains.txt"
+"$G" start "$REAL_USER"
+check "start: addresses and domains" 0 $?
+check "the drop-in for the domains" "Domains=~anthropic.com ~claude.ai" "$(grep Domains "$D")"
+check "resolved reloaded, its cache dropped" "1 1" "$(reloads) $(grep -c flush-caches "$LOG")"
+check "the DNS server's port held past the VPN" 1 "$(python3 -c 'import socket; s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try: s.sendto(b"x", ("9.9.9.9", 9953))
+except PermissionError: exit(1)' 2>/dev/null; echo $?)"
+check "its other ports free (it may be the network's own DNS)" 28 "$(conn 9.9.9.9)"
+check "and the address" 7 "$(conn 160.79.104.10)"
+"$G" start "$REAL_USER"
+check "the same lists again: resolved reloaded again (a failed reload left it behind)" 2 "$(reloads)"
+
+SYSTEMCTL_EXIT=1 "$G" start "$REAL_USER" 2>/dev/null
+check "a failed reload of resolved fails the start" 1 $?
+
+head -c 70000 /dev/zero | tr '\0' 'a' >"$M/vpn-domains.txt"
+"$G" start "$REAL_USER" 2>/dev/null
+check "a list over 64 KB fails the start" 1 $?
+check "and leaves the table" 7 "$(conn 160.79.104.10)"
+
+rm "$M/vpn-domains.txt"
+"$G" start "$REAL_USER"
+check "no domains file: an empty list, the drop-in removed" "0 no" "$? $([[ -e $D ]] && echo yes || echo no)"
+check "the DNS server free again" 28 "$(conn 9.9.9.9)"
+
+printf 'anthropic.com\n' >"$M/vpn-domains.txt"
+"$G" start "$REAL_USER"
+before=$(reloads)
+STATE=stopping "$G" stop
+check "stop while shutting down: drop-in and table gone, no reload" "no 1 $before" \
+  "$([[ -e $D ]] && echo yes || echo no) $(nft list table inet vpn_guard >/dev/null 2>&1; echo $?) $(reloads)"
+"$G" start "$REAL_USER" && "$G" stop
+check "stop: resolved reloaded without the drop-in" "no $((before + 2))" "$([[ -e $D ]] && echo yes || echo no) $(reloads)"
 
 exit $failed

@@ -1,29 +1,45 @@
 #!/bin/bash
 
-# predmaxim.vpn, addresses only through VPN, the root part: vpn-guard@<user>.service runs it.
-# Installed in /usr/local/lib/omarchy-vpn/: root runs nothing from the user's folders.
+# predmaxim.vpn, "always through VPN" held by the system, the root part: vpn-guard@<user>.service
+# runs it. Installed in /usr/local/lib/omarchy-vpn/: root runs nothing from the user's folders.
 # Design: omarchy-dotfiles docs/superpowers/specs/2026-11-25-vpn-only-addresses-design.md
 #
-#   vpn-guard start <user>  the nftables table for the user's list; start and reload alike
-#   vpn-guard stop          remove it
-#   vpn-guard ruleset       stdin: the user's list; stdout: the table for it (nft -f)
+#   vpn-guard start <user>    the user's addresses into nftables, their domains' DNS through
+#                             the VPN (systemd-resolved); start and reload alike
+#   vpn-guard stop            remove both
+#   vpn-guard ruleset [--dns] stdin: the addresses; stdout: the nftables table (nft -f);
+#                             --dns: DNS_SERVER's port held too
+#   vpn-guard resolved        stdin: the domains; stdout: resolved's drop-in, empty for none
 
 set -uo pipefail
-export LC_ALL=C # the list is checked byte by byte, not by the locale's ranges
+export LC_ALL=C # the lists are checked byte by byte, not by the locale's ranges
 
-LIMIT=65536 # bytes of the list: the user's path may be /dev/zero; a FIFO is cut by TimeoutStartSec
+LIMIT=65536 # bytes of a list: the user's path may be /dev/zero; a FIFO is cut by TimeoutStartSec
+# Quad9 on its other port: mihomo answers any :53 that enters TUN itself (dns-hijack),
+# by the system's DNS, which would ask this server again.
+DNS_SERVER=9.9.9.9
+DNS_PORT=9953
+DROPIN=/run/systemd/resolved.conf.d/50-vpn-guard.conf
 
 usage() {
-  echo "Usage: vpn-guard start <user> | stop | ruleset" >&2
+  echo "Usage: vpn-guard start <user> | stop | ruleset [--dns] | resolved" >&2
   exit 2
 }
 
-# The list is the user's file: only an address with its /prefix reaches nft, never its syntax.
-# No wider than /8 and /16, as the widget takes them: a range that wide would cut the VPN's own
-# servers off. IPv4 is checked whole; for IPv6 only its characters, nft refuses a bad one.
+# The lists are the user's files: only an address with its /prefix reaches nft, a domain
+# reaches resolved, never their syntax. No wider than /8 and /16, as the widget takes them:
+# a range that wide would cut the VPN's own servers off. IPv4 is checked whole; for IPv6
+# only its characters, nft refuses a bad one.
 OCTET='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
 V4="^($OCTET\\.){3}$OCTET/([89]|[12][0-9]|3[0-2])$"
 V6='^[0-9a-f:]{2,39}/(1[6-9]|[2-9][0-9]|1[01][0-9]|12[0-8])$'
+DOMAIN='^[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+$'
+
+skipped() {
+  if (($1)); then
+    echo "vpn-guard: skipped $1 invalid lines" >&2
+  fi
+}
 
 ruleset() {
   local line v4=() v6=() skipped=0
@@ -37,9 +53,7 @@ ruleset() {
       ((++skipped))
     fi
   done
-  if ((skipped)); then
-    echo "vpn-guard: skipped $skipped invalid lines" >&2
-  fi
+  skipped $skipped
 
   # One transaction: the table is replaced, never missing or empty in between.
   # Private networks stay open whatever the list says: the router's DNS, LAN, Tailscale.
@@ -73,30 +87,87 @@ NFT
   if ((${#v6[@]})); then
     printf 'add element inet vpn_guard vpn6 { %s }\n' "$(IFS=,; echo "${v6[*]}")"
   fi
+  # Its port only: the same server on :53 may be the network's own DNS, never cut.
+  if [[ ${1-} == --dns ]]; then
+    printf 'add rule inet vpn_guard guard ip daddr %s meta l4proto { tcp, udp } th dport %s counter jump cut\n' "$DNS_SERVER" "$DNS_PORT"
+  fi
+}
+
+# The domains' names (and their subdomains') are asked only of DNS_SERVER, the global
+# server, whose address the table holds to TUN: while the VPN is down they don't resolve.
+# The router answers the rest, as before (it is asked first: it is faster than the VPN;
+# resolved asks the global server for those too and keeps the first answer).
+resolved() {
+  local line domains=() skipped=0
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%$'\r'}
+    if [[ $line =~ $DOMAIN && ${#line} -le 253 ]]; then
+      domains+=("~$line")
+    elif [[ -n $line ]]; then
+      ((++skipped))
+    fi
+  done
+  skipped $skipped
+  if ((${#domains[@]})); then
+    printf '# vpn-guard: the DNS of "always through VPN" goes through the VPN\n[Resolve]\nDNS=%s:%s\nDomains=%s\n' \
+      "$DNS_SERVER" "$DNS_PORT" "${domains[*]}"
+  fi
+}
+
+# read_list <user> <file in ~/.config/mihomo>: its text. Read as the user; setpriv, not runuser:
+# no PAM session, which at boot would wait on user@ (after the network). No file is an empty
+# list; a list it cannot read or a longer one fails, and a reload keeps everything as it was.
+read_list() {
+  local user=$1 file=/home/$1/.config/mihomo/$2 text
+  # shellcheck disable=SC2016 # $1 and $2 are expanded by the user's bash, not here
+  if ! text=$(setpriv --reuid="$user" --regid="$(id -g "$user")" --init-groups --inh-caps=-all -- \
+    bash -c '[[ ! -e $1 ]] || exec head -c "$2" -- "$1"' vpn-guard "$file" $((LIMIT + 1))); then
+    echo "vpn-guard: cannot read ~/.config/mihomo/$2 of $user" >&2
+    return 1
+  fi
+  if ((${#text} > LIMIT)); then
+    echo "vpn-guard: ~/.config/mihomo/$2 of $user is over $LIMIT bytes" >&2
+    return 1
+  fi
+  printf '%s\n' "$text"
+}
+
+# set_resolved <drop-in text>: put it in place (or remove it, when empty) and have resolved
+# read it again, its cache dropped: no answer from before outlives the change. Every time,
+# the same text too: a reload that failed before left the file newer than resolved's config.
+set_resolved() {
+  if [[ -n $1 ]]; then
+    mkdir -p "${DROPIN%/*}" && printf '%s' "$1" >"$DROPIN.tmp" && mv "$DROPIN.tmp" "$DROPIN" || return 1
+  else
+    rm -f "$DROPIN" || return 1
+  fi
+  # Shutting down: resolved goes too, /run with it; a reload would only fight its stop.
+  [[ $(systemctl is-system-running 2>/dev/null) == stopping ]] && return 0
+  # Not running (boot, before it): it reads the drop-in when it starts.
+  systemctl try-reload-or-restart systemd-resolved.service || return 1
+  resolvectl flush-caches 2>/dev/null
+  return 0
 }
 
 start() {
-  local user=$1 list
+  local user=$1 addresses domains conf dns=()
   if [[ ! $user =~ ^[a-z_][a-z0-9_-]*$ ]]; then
     echo "vpn-guard: invalid user name" >&2
     exit 2
   fi
-  # The list is read as the user; setpriv, not runuser: no PAM session, which at boot would wait on user@ (after the network).
-  # No file is an empty list; a list it cannot read or a longer one fails, and a reload keeps the table as it was.
-  # shellcheck disable=SC2016 # $1 and $2 are expanded by the user's bash, not here
-  if ! list=$(setpriv --reuid="$user" --regid="$(id -g "$user")" --init-groups --inh-caps=-all -- \
-    bash -c '[[ ! -e $1 ]] || exec head -c "$2" -- "$1"' vpn-guard "/home/$user/.config/mihomo/vpn-addresses.txt" $((LIMIT + 1))); then
-    echo "vpn-guard: cannot read ~/.config/mihomo/vpn-addresses.txt of $user" >&2
-    exit 1
+  addresses=$(read_list "$user" vpn-addresses.txt) || exit 1
+  domains=$(read_list "$user" vpn-domains.txt) || exit 1
+  conf=$(printf '%s\n' "$domains" | resolved) || exit 1
+  if [[ -n $conf ]]; then
+    dns=(--dns)
   fi
-  if ((${#list} > LIMIT)); then
-    echo "vpn-guard: ~/.config/mihomo/vpn-addresses.txt of $user is over $LIMIT bytes" >&2
-    exit 1
-  fi
-  printf '%s\n' "$list" | ruleset | nft -f -
+  # The table first: the DNS server is held to TUN before resolved asks it anything.
+  printf '%s\n' "$addresses" | ruleset "${dns[@]}" | nft -f - || exit 1
+  set_resolved "$conf" || exit 1
 }
 
 stop() {
+  set_resolved ""
   nft delete table inet vpn_guard 2>/dev/null
   return 0
 }
@@ -104,6 +175,7 @@ stop() {
 case ${1-} in
 start) start "${2-}" ;;
 stop) stop ;;
-ruleset) ruleset ;;
+ruleset) ruleset "${2-}" ;;
+resolved) resolved ;;
 *) usage ;;
 esac

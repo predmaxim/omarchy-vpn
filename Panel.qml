@@ -108,15 +108,17 @@ Panel {
     if (code !== 0) { root.done(); root.notify(root.tr("Could not save VPN settings"), ""); return }
     // A first run may have found another widget's state.json: read the file back.
     if (p.options.firstRun) vpn.reread(); else vpn.saved = p.next
-    // The guard re-reads the list before mihomo restarts: a new address is shut out during the restart too.
-    if (JSON.stringify(p.prev.vpnAddresses) !== JSON.stringify(p.next.vpnAddresses)) guardReloader.running = true
+    // The guard re-reads its lists before mihomo restarts: a new address is shut out during the
+    // restart too. Domains do without it (mihomo's rule alone), so only an installed guard gets them.
+    var same = function(list) { return JSON.stringify(p.prev[list]) === JSON.stringify(p.next[list]) }
+    if (!same("vpnAddresses") || !same("proxyDomains") && vpn.guardActive) guardReloader.running = true
     else root.startXray()
   }
 
   // A failed reload is no reason to stop: the rest of the change still goes in.
   function guardReloaded(code) {
     vpn.guardFailed = code !== 0
-    if (code !== 0) root.notify(root.tr("Could not protect the VPN-only addresses"), root.tr("Check: systemctl status vpn-guard@%1", Quickshell.env("USER")))
+    if (code !== 0) root.notify(root.tr("Could not hold ALWAYS THROUGH VPN"), root.tr("Check: systemctl status vpn-guard@%1", Quickshell.env("USER")))
     vpn.checkGuard()
     root.startXray()
   }
@@ -953,7 +955,7 @@ Panel {
             // Two rule sections: caption, a borderless field (Enter adds), entries with ✕.
             Repeater {
               model: [{ list: "proxyDomains", title: root.tr("ALWAYS THROUGH VPN"), placeholder: root.tr("Domain, IP or network…"),
-                        hint: root.tr("An IP or a network (160.79.104.0/23) is never reached past the VPN: while it is down, it is cut off.") },
+                        hint: root.tr("A domain's DNS goes through the VPN too. An IP or a network (160.79.104.0/23) is never reached past the VPN: while it is down, it is cut off.") },
                       { list: "directDomains", title: root.tr("ALWAYS DIRECT"), placeholder: root.tr("Domain…") }]
               delegate: Column {
                 id: domains

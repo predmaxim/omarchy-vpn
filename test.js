@@ -162,7 +162,7 @@ assert.strictEqual(cfg.tun.enable, false)
 
 // files and the writer (runs the real sh script in a temp dir)
 const fl = M.files(cs)
-assert.deepStrictEqual(fl.map(f => f.path), ["state.json", "config.yaml", "links/s1.txt", "vpn-addresses.txt"])
+assert.deepStrictEqual(fl.map(f => f.path), ["state.json", "config.yaml", "links/s1.txt", "vpn-addresses.txt", "vpn-domains.txt"])
 assert.deepStrictEqual(JSON.parse(fl[0].data), cs)
 assert.strictEqual(fl[2].data, "hy2://p@h:443#Hy2-Main\n")
 const os = require("os"), path = require("path"), cp = require("child_process")
@@ -373,6 +373,8 @@ assert.strictEqual(M.buildConfig(xs).tun.device, "Meta")
 // the guard's list file: a network per line; empty when the list is
 assert.strictEqual(M.files(vx).find(f => f.path === "vpn-addresses.txt").data, "160.79.104.0/23\n2607:6bc0::/48\n")
 assert.strictEqual(M.files(xs).find(f => f.path === "vpn-addresses.txt").data, "")
+// and the "always through VPN" domains, whose DNS it sends through the VPN
+assert.strictEqual(M.files(M.patch(xs, { proxyDomains: ["anthropic.com", "claude.ai"] })).find(f => f.path === "vpn-domains.txt").data, "anthropic.com\nclaude.ai\n")
 // a state.json from before keeps nothing of the programs list
 assert.ok(!("vpnApps" in M.load('{"vpnApps":["curl"]}')))
 // Xray: every location behind a SOCKS port of its own, the API secret the password; tags by location
@@ -391,7 +393,7 @@ assert.ok(!("dns" in xc))
 assert.strictEqual(xs.subscriptions[1].locations[0].outbounds[0].tag, "de-1")
 // mihomo: a SOCKS server per location, named after it; Xray's own traffic goes direct
 const xfiles = M.files(xs)
-assert.deepStrictEqual(xfiles.map(f => f.path), ["state.json", "config.yaml", "links/sa.txt", "xray/" + xsub.id + ".json", "links/" + xsub.id + ".txt", "xray/sx2.json", "links/sx2.txt", "vpn-addresses.txt"])
+assert.deepStrictEqual(xfiles.map(f => f.path), ["state.json", "config.yaml", "links/sa.txt", "xray/" + xsub.id + ".json", "links/" + xsub.id + ".txt", "xray/sx2.json", "links/sx2.txt", "vpn-addresses.txt", "vpn-domains.txt"])
 assert.deepStrictEqual(JSON.parse(xfiles[3].data), xc)
 const xproxies = st => JSON.parse(M.files(st).find(f => f.path === "links/" + xsub.id + ".txt").data).proxies
 assert.deepStrictEqual(xproxies(xs)[1], { name: "🇳🇱 Amsterdam", type: "socks5", server: "127.0.0.1", port: X.XRAY_PORT + 1,
