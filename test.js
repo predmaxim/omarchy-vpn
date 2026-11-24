@@ -4,7 +4,7 @@ const assert = require("assert")
 const src = fs.readFileSync(__dirname + "/Model.js", "utf8").replace(".pragma library", "")
 const M = new Function(src + `; return { defaults, load, randomSecret, clone, patch, idFor, classify, host,
   decodeTitle, splitResponse, urlSubscription, linksSubscription, addSubscription, removeSubscription, useSubscription,
-  setEnabled, normalizeDomain, addDomain, removeDomain, normalizeAddress, addAddress, removeAddress, sectionEntries, addRule, buildConfig, files, writerEnv, WRITE_SCRIPT, status, view, isError,
+  setEnabled, normalizeDomain, addDomain, removeDomain, normalizeAddress, addAddress, removeAddress, sectionEntries, addRule, inUse, buildConfig, files, writerEnv, WRITE_SCRIPT, status, view, isError,
   isConnecting, glyph, tooltip, retryDelay, TEST_URL, parseState }`)()
 
 // state.json: broken or partial files fall back to defaults field by field
@@ -231,6 +231,9 @@ assert.strictEqual(M.glyph({ kind: "on" }), "\u{F059F}")
 for (const kind of ["off", "empty"]) assert.strictEqual(M.glyph({ kind }), "\u{F0A8E}")
 for (const kind of ["dead", "down", "nosrv"]) assert.strictEqual(M.glyph({ kind }), "\u{F1790}")
 const trEn = (t, ...a) => a.reduce((s, x, i) => s.split("%" + (i + 1)).join(x), t)
+// the row marked in use: the fallback's pick, not the hand-picked one; that one while mihomo says nothing
+assert.strictEqual(M.inUse({ active: "s1" }, { group: "s2" }), "s2")
+assert.strictEqual(M.inUse({ active: "s1" }, { group: "" }), "s1")
 // unguarded: only with addresses listed, right after down
 assert.strictEqual(M.view(M.patch(cs, { vpnAddresses: ["160.79.104.0/23"] }), stt, true, false).kind, "unguarded")
 assert.strictEqual(M.view(M.patch(cs, { vpnAddresses: ["160.79.104.0/23"] }), stt, false, false).kind, "down")

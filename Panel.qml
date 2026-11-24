@@ -739,7 +739,7 @@ Panel {
                 anchors.left: parent.left
                 anchors.leftMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-                text: row.modelData.id === vpn.saved.active ? "\u{F043E}" : "\u{F043D}"
+                text: row.modelData.id === Model.inUse(vpn.saved, vpn.st) ? "\u{F043E}" : "\u{F043D}"
                 color: root.fg
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.title
@@ -758,7 +758,7 @@ Panel {
                 color: root.fg
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
-                font.bold: row.modelData.id === vpn.saved.active
+                font.bold: row.modelData.id === Model.inUse(vpn.saved, vpn.st)
               }
 
               Row {

@@ -562,8 +562,14 @@ function status(configs, proxies, providers) {
     delay: history.length ? history[history.length - 1].delay : -1, counts: counts }
 }
 
+// The subscription in use: mihomo's pick in the VPN group (the fallback may have moved off
+// the one picked by hand, state.active), the picked one while mihomo has none to say.
+function inUse(state, st) {
+  return st.group || state.active
+}
+
 function view(state, st, apiUp, guarded) {
-  var id = st.group || state.active
+  var id = inUse(state, st)
   var sub = state.subscriptions.filter(function(s) { return s.id === id })[0]
   var v = { kind: "on", name: sub ? sub.name : "", server: st.server, delay: st.delay }
   if (!apiUp) v.kind = "down"
