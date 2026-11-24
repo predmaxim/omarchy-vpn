@@ -290,17 +290,19 @@ function setEnabled(state, on) {
 }
 
 // "https://Sub.Example.COM:443/x", "*.example.com" -> "example.com"; "" if not
-// a domain. ASCII only: hostnames reach mihomo in punycode.
+// a domain, an IPv4 address too: a domain rule never matches a bare IP.
+// ASCII only: hostnames reach mihomo in punycode.
 function normalizeDomain(text) {
   var d = String(text || "").trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
   d = d.split(/[\/?#]/)[0].replace(/:\d+$/, "").replace(/^\*?\./, "")
-  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d) ? d : ""
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d) && !isIPv4(d) ? d : ""
 }
 
 // list: "proxyDomains" or "directDomains". A domain lives in one list only.
+// An address or a network: "address", it belongs in vpnAddresses.
 function addDomain(state, list, text) {
   var domain = normalizeDomain(text)
-  if (!domain) return { state: state, error: "invalid" }
+  if (!domain) return { state: state, error: normalizeAddress(text) ? "address" : "invalid" }
   if (state[list].indexOf(domain) >= 0) return { state: state, error: "exists" }
   var other = list === "proxyDomains" ? "directDomains" : "proxyDomains"
   var next = clone(state)

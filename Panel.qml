@@ -401,6 +401,7 @@ Panel {
       root.notify(list === "vpnAddresses" ? root.tr("Not an IP or a network: %1", text.trim()) : root.tr("Not a domain: %1", text.trim()), "")
       return false
     }
+    if (r.error === "address") { root.notify(root.tr("Not a domain: %1", text.trim()), root.tr("An IP or a network goes to ONLY THROUGH VPN — ADDRESSES")); return false }
     if (r.error === "private") { root.notify(root.tr("A private network never goes through the VPN: %1", Model.normalizeAddress(text)), ""); return false }
     if (!r.error) root.commit(function(s) { return add(s).state }, true, null)
     return true

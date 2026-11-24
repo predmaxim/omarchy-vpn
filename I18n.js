@@ -37,6 +37,7 @@ var TABLES = {
       "IP или сеть (160.79.104.0/23), не домен: только через VPN, пока он лежит — недоступны.",
     "Not an IP or a network: %1": "Не IP и не сеть: %1",
     "A private network never goes through the VPN: %1": "Частная сеть через VPN не идёт: %1",
+    "An IP or a network goes to ONLY THROUGH VPN — ADDRESSES": "IP и сети — в список «ТОЛЬКО ЧЕРЕЗ VPN — АДРЕСА»",
     "Could not protect the VPN-only addresses": "Не удалось защитить адреса «только через VPN»",
     "Check: systemctl status vpn-guard@%1": "Проверьте: systemctl status vpn-guard@%1",
     "ADD SUBSCRIPTION": "ДОБАВИТЬ ПОДПИСКУ",
