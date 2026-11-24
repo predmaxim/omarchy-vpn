@@ -7,13 +7,12 @@ An Omarchy shell plugin that runs your VPN through [mihomo](https://github.com/M
 - **Subscriptions** — add a subscription URL or proxy links (`hy2://`, `vless://`, `trojan://`, … — whatever mihomo parses) from the clipboard or from a QR code on screen. Pick the active subscription by hand (the pick restarts mihomo, a second or two offline: the new config puts it first in the `fallback` order — a pick through the API alone mihomo drops on the next group test); when none of its servers answers, mihomo moves to the next live subscription (`fallback`, checked every minute) and back once yours recovers — the icon's tooltip names the one in use. Inside a subscription mihomo keeps the fastest server (`url-test`) and switches when one dies; every subscription is tested on its interval even while unused (`lazy: false`), so the switch lands on one already measured.
 - **Subscriptions with locations (Xray JSON)** — some services answer the subscription URL with a JSON array of whole Xray configs, one per location (Happ and v2rayN read those). mihomo can't use their servers (their REALITY lets in Xray-core clients only), so the plugin runs [Xray](https://github.com/XTLS/Xray-core) for them and mihomo goes through it. The location is picked in a dropdown on the subscription's row (or ←/→): **Auto (fastest)** — mihomo tests every location and keeps the fastest that answers, moves to the next fastest when it dies, and to the next subscription when none answers; or one location by hand. Auto skips the locations of the country set to go direct (its flag in front, "🇷🇺 …" for Russia): such a location exits there, blocked sites stay blocked through it, and being the closest it would win every test. By hand it can still be picked. Picking restarts nothing. The widget downloads such a subscription again every `profile-update-interval` (an hour by default).
 - **Rules** — behind the gear in the header (Back or Esc returns): a country whose sites go direct (Russia, or none), ad blocking, switching to a working subscription (on by default; off — only the one you picked), and your own "always through VPN" / "always direct" domain lists (subdomains included). Private networks (LAN, corporate VPNs, Tailscale) always go direct.
-  The third list, "only through VPN — programs", takes a program's file name or its launcher's (`cursor`, `obsidian`), the real file's, not a link's (`readlink -f "$(command -v python)"` shows it: `python3.14`): such a program reaches the internet only through the VPN and gets an error, never a direct connection, while the VPN is off or down (needs `vpn-guard`, see Install). The widget reloads the guard before it restarts mihomo; the globe turns red when the guard is down, until it is active again (checked every minute), and when the widget's reload of it fails while it stays active (a notification says so, the rest of the change still goes in), until a reload goes through. Limits:
-  - a program already running: restart it after adding;
-  - whatever it starts goes only through the VPN too: the terminal inside Cursor and everything in it, a browser it opens;
-  - Russian IPs (sent past TUN) are closed to it;
-  - while the list is not empty, every Electron program sends what would go direct (your direct domains, the country's sites) through the VPN: mihomo sees them all as `electron`;
-  - never add shells or the session (`bash`, `sh`, `uwsm`, `Hyprland`): the whole session would get the tag;
-  - never add `curl`: the widget downloads subscriptions and the country's list with it, and would lose them while the VPN is down.
+  The third list, "only through VPN — addresses", takes IPv4 and IPv6 addresses and networks (`160.79.104.0/23`, `2607:6bc0::/48`; not domains, not private networks, not wider than `/8` or `/16`): they are reached only through the VPN, and while it is off or down every connection to them is refused at once, by any program, mihomo's own `DIRECT` too (needs `vpn-guard`, see Install). The widget reloads the guard before it restarts mihomo; the globe turns red when the guard is down, until it is active again (checked every minute), and when the widget's reload of it fails while it stays active (a notification says so, the rest of the change still goes in), until a reload goes through. Limits:
+  - addresses, not names: a service behind a shared CDN (Cloudflare) has no addresses of its own, and its addresses change without notice; Anthropic publishes its own ([IP addresses](https://platform.claude.com/docs/en/api/ip-addresses): `160.79.104.0/23`, `153.61.224.0/22`, `2607:6bc0::/48`);
+  - IPv6 to them is always refused: mihomo carries no IPv6 (`ipv6: false`), so apps fall back to IPv4 at once;
+  - an address in the country's networks (sent past TUN) stays unreachable, VPN or not; private networks stay open whatever the list says;
+  - never list your VPN servers: mihomo reaches them past TUN, and the guard would cut the VPN off;
+  - DNS queries for their names still go to the router's DNS, past the VPN.
 - **Bypass, in `state.json` for now** — `directPorts` (default `[51413]`, Transmission's peer port) and `directApps` (default: Transmission and qBittorrent). Packets from those ports never enter TUN; those apps go `DIRECT` by process name. That is how torrents stay off the VPN.
 
 No logs, server picker (beyond locations) or other settings in the UI on purpose.
@@ -22,7 +21,7 @@ No logs, server picker (beyond locations) or other settings in the UI on purpose
 
 ## Install
 
-Requirements: `mihomo-bin` (AUR), `slurp`, `grim`, `zbar`, `wl-clipboard`, `curl` ≥ 8.3, `libnotify`; for subscriptions with locations also `xray-bin` (AUR); for VPN-only programs also `bpf`, `clang`, `libbpf`, `jq`.
+Requirements: `mihomo-bin` (AUR), `slurp`, `grim`, `zbar`, `wl-clipboard`, `curl` ≥ 8.3, `libnotify`; for subscriptions with locations also `xray-bin` (AUR); for VPN-only addresses also `nftables`.
 
 ```bash
 git clone https://github.com/predmaxim/omarchy-vpn.git ~/.config/omarchy/plugins/predmaxim.vpn
@@ -38,12 +37,9 @@ yay -S xray-bin
 install -Dm644 ~/.config/omarchy/plugins/predmaxim.vpn/systemd/mihomo-xray@.service \
   ~/.config/systemd/user/mihomo-xray@.service
 systemctl --user daemon-reload
-# VPN-only programs only:
-sudo pacman -S --needed bpf clang libbpf jq
+# VPN-only addresses only:
+sudo pacman -S --needed nftables
 cd ~/.config/omarchy/plugins/predmaxim.vpn
-o=$(mktemp -d)/vpn-guard.bpf.o   # your own directory: root installs what is built here
-clang -O2 -g -target bpf -c guard/vpn-guard.bpf.c -o "$o"
-sudo install -Dm644 "$o" /usr/local/lib/omarchy-vpn/vpn-guard.bpf.o
 sudo install -Dm755 guard/vpn-guard /usr/local/lib/omarchy-vpn/vpn-guard
 sudo install -Dm644 systemd/vpn-guard@.service /etc/systemd/system/vpn-guard@.service
 sudo install -Dm644 systemd/50-mihomo-restart.rules /etc/polkit-1/rules.d/50-mihomo-restart.rules
@@ -52,7 +48,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now vpn-guard@$USER
 
 `override.conf` makes the packaged `mihomo@.service` run as you on `~/.config/mihomo` with only the network capabilities TUN needs (the packaged unit runs as root on `/etc/mihomo` with far more), and restarts it forever if it exits. `50-mihomo-restart.rules` lets you (local, active session) restart your own `mihomo@<you>` unit and reload your own `vpn-guard@<you>` without a password, and nothing else: that is how the widget applies a change. `mihomo-xray@.service` is a user unit: one Xray per subscription with locations, which the widget enables, restarts and stops itself.
 
-`vpn-guard.bpf.o` (built from `guard/vpn-guard.bpf.c`) is the kernel part of VPN-only programs. `vpn-guard`, run as root by `vpn-guard@<you>.service` at boot (before the network) and on the widget's reload, loads it, puts the names from `~/.config/mihomo/vpn-apps.txt` into the kernel (read as you, invalid names skipped; no file is an empty list, a file it cannot read fails the start or reload and leaves the kernel's names as they were) and sets the `nftables` table. Both are root's copies in `/usr/local/lib/omarchy-vpn/`: root loads nothing from the plugin's folder, which you can write to. So `git pull` does not update them: when `guard/` or `systemd/` change, repeat the steps above; after a new `vpn-guard.bpf.o` also `sudo systemctl restart vpn-guard@$USER` and restart the listed programs a script starts (`cursor`, `obsidian`) — the restart forgets their tags.
+`vpn-guard`, run as root by `vpn-guard@<you>.service` at boot (before the network) and on the widget's reload, reads `~/.config/mihomo/vpn-addresses.txt` (as you, at most 64 KB; lines other than an address with its `/prefix`, or wider than `/8`, `/16`, skipped; no file is an empty list) and replaces the `nftables` table `inet vpn_guard` in one transaction. A file it cannot read, or a network `nft` refuses, fails the start or reload, and a failed reload leaves the table as it was. It is root's copy in `/usr/local/lib/omarchy-vpn/`: root runs nothing from the plugin's folder, which you can write to. So `git pull` does not update it: when `guard/` or `systemd/` change, repeat the steps above and `sudo systemctl reload vpn-guard@$USER`.
 
 ## How it works
 
@@ -62,9 +58,8 @@ sudo systemctl daemon-reload && sudo systemctl enable --now vpn-guard@$USER
 - Domain rules match on the name mihomo reads from the connection itself (`sniffer`: TLS and QUIC SNI, HTTP Host). Apps resolve through the system DNS — the router, a private network that goes past TUN — so `dns-hijack` never sees the query and mihomo gets a bare IP: without sniffing no domain rule (your lists, the country's sites, ad blocking) matched at all, only the IP ones. The connection still goes to the IP the app resolved.
 - TUN uses the `gvisor` stack: with `system`/`mixed`, connections hung — most likely ufw dropping what arrives on the TUN device (`DEFAULT_INPUT_POLICY="DROP"`), not `rp_filter`.
 - A subscription with locations: the widget keeps its locations in `state.json` — each location's servers and how its config picks one for the rest of the traffic (its last rule without conditions, with its balancer); the location's other rules (sites that go direct) are dropped, that is mihomo's to decide. It writes `xray/<id>.json`: every location behind a SOCKS port of its own on `127.0.0.1` (a block of 100 from 17900, one block per subscription), the API secret the password, tags prefixed with the location's index. mihomo gets `links/<id>.txt` — a SOCKS server per location, named after it (all of them for Auto, else the picked one) — and re-reads it on a pick (`PUT /providers/proxies/<id>`), no restart. Xray (`mihomo-xray@<id>`) restarts only when its config changes: fresh servers, ports or the secret. Its own traffic to the servers comes back through TUN and goes out by `PROCESS-NAME,xray,DIRECT`. Files reach the writer in 32k-character parts of the environment: one variable holds 128 KiB, and `state.json` with such a subscription runs to ~80 KB.
-- Retries: a dead current server re-tests its group, an empty subscription re-downloads — after 5 s, 15 s, 60 s, then every 5 minutes. The icon is orange between states: while a change is applied, before the current server's first test, and while the quick retries (5 s, 15 s, 60 s) run. It turns red when the service is down, VPN-only programs are listed and their guard is down (see Rules), or a subscription still has no servers or none answers after them.
-- VPN-only programs are held by the kernel, not by mihomo alone. An eBPF program tags a process when it starts a file of a listed name (a binary or a launcher script, such as `/usr/bin/obsidian`); its threads and children inherit the tag. Sockets of tagged processes, and new sockets of an already running program of a listed name, get the mark `0x10000000`. `nftables` (`table inet vpn_guard`) lets marked packets out only through `lo`, `Meta` (the TUN) and private networks, and rejects the rest at once: with mihomo down or TUN off these programs get an error, never a direct connection to the internet. eBPF itself denies nothing. A reload of the list keeps the tags, a stop or restart of the unit drops them. Emergency exit: `sudo systemctl stop vpn-guard@$USER` removes all of it; a failed or timed-out start removes it by itself (`ExecStopPost=`).
-
+- Retries: a dead current server re-tests its group, an empty subscription re-downloads — after 5 s, 15 s, 60 s, then every 5 minutes. The icon is orange between states: while a change is applied, before the current server's first test, and while the quick retries (5 s, 15 s, 60 s) run. It turns red when the service is down, VPN-only addresses are listed and their guard is down (see Rules), or a subscription still has no servers or none answers after them.
+- VPN-only addresses are held by `nftables`, not by mihomo alone. mihomo sends them to `VPN` by its first rules (`IP-CIDR`, `IP-CIDR6`, before `xray` and `directApps`). The table `inet vpn_guard` (hooks `output` and `forward`, so containers and VMs too) lets a packet to a listed network out only through `lo` and `Meta` (the TUN) and refuses the rest at once — a TCP reset, an ICMP error for the rest. With mihomo down or TUN off they get an error, never a direct connection. Private networks pass before the list. Emergency exit: `sudo systemctl stop vpn-guard@$USER` removes the table; a failed or timed-out start removes it by itself (`ExecStopPost=`).
 
 ## Colours
 
@@ -86,5 +81,6 @@ omarchy-shell predmaxim.vpn-ctl add '<text>'  # add a subscription URL or links
 
 ```bash
 node test.js
+guard/test.sh         # vpn-guard's table in a network namespace of its own: no root, the machine's network untouched
 sudo guard/check.sh   # vpn-guard installed and active, VPN on: real connections, PASS or FAIL per check
 ```

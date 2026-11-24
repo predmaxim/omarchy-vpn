@@ -44,7 +44,7 @@ Panel {
   // Rules page rows for the keyboard, in screen order; cursor indexes them there.
   readonly property var ruleRows: {
     var rows = [{ kind: "country" }, { kind: "ads" }, { kind: "auto" }]
-    ;["proxyDomains", "directDomains", "vpnApps"].forEach(function(list) {
+    ;["proxyDomains", "directDomains", "vpnAddresses"].forEach(function(list) {
       rows.push({ kind: "field", list: list })
       ;(vpn.saved[list] || []).forEach(function(d) { rows.push({ kind: "domain", list: list, value: d }) })
     })
@@ -108,15 +108,15 @@ Panel {
     if (code !== 0) { root.done(); root.notify(root.tr("Could not save VPN settings"), ""); return }
     // A first run may have found another widget's state.json: read the file back.
     if (p.options.firstRun) vpn.reread(); else vpn.saved = p.next
-    // The guard re-reads the list before mihomo restarts: a new program is shut out during the restart too.
-    if (JSON.stringify(p.prev.vpnApps) !== JSON.stringify(p.next.vpnApps)) guardReloader.running = true
+    // The guard re-reads the list before mihomo restarts: a new address is shut out during the restart too.
+    if (JSON.stringify(p.prev.vpnAddresses) !== JSON.stringify(p.next.vpnAddresses)) guardReloader.running = true
     else root.startXray()
   }
 
   // A failed reload is no reason to stop: the rest of the change still goes in.
   function guardReloaded(code) {
     vpn.guardFailed = code !== 0
-    if (code !== 0) root.notify(root.tr("Could not protect the VPN-only programs"), root.tr("Check: systemctl status vpn-guard@%1", Quickshell.env("USER")))
+    if (code !== 0) root.notify(root.tr("Could not protect the VPN-only addresses"), root.tr("Check: systemctl status vpn-guard@%1", Quickshell.env("USER")))
     vpn.checkGuard()
     root.startXray()
   }
@@ -271,7 +271,7 @@ Panel {
     else if (y + item.height > rulesTab.contentY + rulesTab.height) rulesTab.contentY = y + item.height - rulesTab.height
   }
   function removeDomain(list, domain) {
-    root.commit(function(s) { return list === "vpnApps" ? Model.removeApp(s, domain) : Model.removeDomain(s, list, domain) }, true, null)
+    root.commit(function(s) { return list === "vpnAddresses" ? Model.removeAddress(s, domain) : Model.removeDomain(s, list, domain) }, true, null)
   }
   function activateAdd() {
     if (root.addCol === 0) paste.running = true
@@ -393,15 +393,15 @@ Panel {
     qrDelay.start()
   }
 
-  // A rules list's field: a domain, or a program for vpnApps.
+  // A rules list's field: a domain, or an IP or a network for vpnAddresses.
   function addDomain(list, text) {
-    var add = list === "vpnApps" ? function(s) { return Model.addApp(s, text) } : function(s) { return Model.addDomain(s, list, text) }
+    var add = list === "vpnAddresses" ? function(s) { return Model.addAddress(s, text) } : function(s) { return Model.addDomain(s, list, text) }
     var r = add(vpn.saved)
     if (r.error === "invalid") {
-      root.notify(list === "vpnApps" ? root.tr("Not a program name: %1", text.trim()) : root.tr("Not a domain: %1", text.trim()), "")
+      root.notify(list === "vpnAddresses" ? root.tr("Not an IP or a network: %1", text.trim()) : root.tr("Not a domain: %1", text.trim()), "")
       return false
     }
-    if (r.error === "reserved") { root.notify(root.tr("%1 runs the VPN itself", Model.normalizeApp(text)), ""); return false }
+    if (r.error === "private") { root.notify(root.tr("A private network never goes through the VPN: %1", Model.normalizeAddress(text)), ""); return false }
     if (!r.error) root.commit(function(s) { return add(s).state }, true, null)
     return true
   }
@@ -953,8 +953,8 @@ Panel {
             Repeater {
               model: [{ list: "proxyDomains", title: root.tr("ALWAYS THROUGH VPN"), placeholder: root.tr("Domain…") },
                       { list: "directDomains", title: root.tr("ALWAYS DIRECT"), placeholder: root.tr("Domain…") },
-                      { list: "vpnApps", title: root.tr("ONLY THROUGH VPN — PROGRAMS"), placeholder: root.tr("Program…"),
-                        hint: root.tr("The file name of the program or of its launcher, not of a link to it (cursor, obsidian). Restart a running one.") }]
+                      { list: "vpnAddresses", title: root.tr("ONLY THROUGH VPN — ADDRESSES"), placeholder: root.tr("IP or network…"),
+                        hint: root.tr("An IP or a network (160.79.104.0/23), not a domain: never reached past the VPN, cut off while it is down.") }]
               delegate: Column {
                 id: domains
                 required property var modelData

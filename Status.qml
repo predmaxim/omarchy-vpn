@@ -21,7 +21,7 @@ Item {
   // then don't count.
   property bool quiet: false
   readonly property bool apiUp: failures < 3
-  // VPN-only programs: their kernel guard (vpn-guard@<user>) is up. A failed
+  // VPN-only addresses: their guard (vpn-guard@<user>, nftables) is up. A failed
   // reload may leave the unit active, so Panel keeps that failure in guardFailed.
   property bool guardActive: true
   property bool guardFailed: false
@@ -41,9 +41,9 @@ Item {
 
   function fail() { if (!root.quiet) root.failures++ }
 
-  // Asked only while programs are listed: without them the guard is not needed.
+  // Asked only while addresses are listed: without them the guard is not needed.
   function checkGuard() {
-    if (!root.saved.vpnApps.length) root.guardActive = true
+    if (!root.saved.vpnAddresses.length) root.guardActive = true
     else guardCheck.running = true
   }
 

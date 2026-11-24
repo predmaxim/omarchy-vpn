@@ -1,6 +1,6 @@
 // /etc/polkit-1/rules.d/50-mihomo-restart.rules
 // The widget applies a new config by restarting mihomo, and a new list of
-// VPN-only programs by reloading vpn-guard: let a local, active user restart
+// VPN-only addresses by reloading vpn-guard: let a local, active user restart
 // their own mihomo@<user> and reload their own vpn-guard@<user> without a
 // password — nothing else.
 polkit.addRule(function(action, subject) {

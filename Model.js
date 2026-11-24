@@ -31,8 +31,8 @@ function defaults(secret) {
     // Bypass VPN. Ports: packets from them are kept out of TUN by the kernel.
     // Apps: DIRECT by process name in mihomo. Default — torrent clients.
     directPorts: [51413],
-    // Only through VPN: a kernel mark (vpn-guard) and a mihomo rule.
-    vpnApps: [],
+    // IPv4/IPv6 networks only through VPN: a mihomo rule and nftables (vpn-guard).
+    vpnAddresses: [],
     directApps: ["transmission-qt", "transmission-gtk", "transmission-daemon", "qbittorrent", "qbittorrent-nox"] }
 }
 
@@ -315,27 +315,63 @@ function removeDomain(state, list, domain) {
   return next
 }
 
-// A program's file name, a path cut to it. The guard matches the real file after links: a link's own name never matches.
-function normalizeApp(text) {
-  var name = String(text).trim().split("/").pop()
-  return /^[A-Za-z0-9._+-]{1,63}$/.test(name) ? name : ""
+function isIPv4(s) {
+  return /^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/.test(s)
 }
 
-// mihomo and xray carry the VPN itself: marked, they would loop.
-function addApp(state, text) {
-  var name = normalizeApp(text)
-  if (!name) return { state: state, error: "invalid" }
-  if (name === "mihomo" || name === "xray") return { state: state, error: "reserved" }
-  if (state.vpnApps.indexOf(name) >= 0) return { state: state, error: "exists" }
+// At most one "::", groups of 1-4 hex digits, 8 of them without "::".
+function isIPv6(s) {
+  var halves = s.split("::")
+  if (halves.length > 2) return false
+  var groups = [].concat.apply([], halves.map(function(h) { return h ? h.split(":") : [] }))
+  if (!groups.every(function(g) { return /^[0-9a-f]{1,4}$/.test(g) })) return false
+  return halves.length === 2 ? groups.length < 8 : groups.length === 8
+}
+
+function ipv4Number(s) {
+  return s.split(".").reduce(function(n, x) { return n * 256 + Number(x) }, 0)
+}
+
+// Private networks never go through TUN (PRIVATE, fc00::/7, fe80::/10, ::/16 with ::1):
+// the guard lets them out whatever the list says, so listing one would mean nothing.
+function isPrivate(cidr) {
+  var ip = cidr.split("/")[0], bits = Number(cidr.split("/")[1])
+  if (ip.indexOf(":") >= 0) {
+    var first = parseInt(ip.split(":")[0] || "0", 16)
+    return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || first === 0
+  }
+  return PRIVATE.some(function(p) {
+    var b = Math.min(bits, Number(p.split("/")[1])), unit = Math.pow(2, 32 - b)
+    return Math.floor(ipv4Number(ip) / unit) === Math.floor(ipv4Number(p.split("/")[0]) / unit)
+  })
+}
+
+// "160.79.104.10" -> "160.79.104.10/32", " 2607:6BC0::/48 " -> "2607:6bc0::/48"; "" if
+// not an address or network, or wider than /8 (IPv4), /16 (IPv6): a range that wide is a
+// slip, and it would take in the VPN's own servers — the guard cuts mihomo off from a
+// listed server as from anything else. nftables and mihomo ignore host bits.
+function normalizeAddress(text) {
+  var m = /^([0-9a-f.:]+)(?:\/(\d{1,3}))?$/.exec(String(text || "").trim().toLowerCase())
+  if (!m) return ""
+  var v6 = m[1].indexOf(":") >= 0
+  var bits = m[2] === undefined ? (v6 ? 128 : 32) : Number(m[2])
+  if (!(v6 ? isIPv6(m[1]) : isIPv4(m[1])) || bits > (v6 ? 128 : 32) || bits < (v6 ? 16 : 8)) return ""
+  return m[1] + "/" + bits
+}
+
+function addAddress(state, text) {
+  var cidr = normalizeAddress(text)
+  if (!cidr) return { state: state, error: "invalid" }
+  if (isPrivate(cidr)) return { state: state, error: "private" }
+  if (state.vpnAddresses.indexOf(cidr) >= 0) return { state: state, error: "exists" }
   var next = clone(state)
-  next.vpnApps.push(name)
-  next.directApps = next.directApps.filter(function(x) { return x !== name })
+  next.vpnAddresses.push(cidr)
   return { state: next, error: "" }
 }
 
-function removeApp(state, name) {
+function removeAddress(state, cidr) {
   var next = clone(state)
-  next.vpnApps = next.vpnApps.filter(function(x) { return x !== name })
+  next.vpnAddresses = next.vpnAddresses.filter(function(x) { return x !== cidr })
   return next
 }
 
@@ -366,13 +402,10 @@ function buildConfig(state) {
   var rules = state.directApps.map(function(a) { return "PROCESS-NAME," + a + ",DIRECT" })
   // Xray's own traffic to its servers comes back through TUN: out it goes, or it loops.
   if (subs.some(function(s) { return s.kind === "xray" })) rules.unshift("PROCESS-NAME,xray,DIRECT")
-  // First: the list wins over directApps. mihomo sees only "electron" for Electron
-  // programs, so without its rule their exceptions would go DIRECT by its socket, past the kernel.
-  if (state.vpnApps.length) {
-    var only = state.vpnApps.map(function(a) { return "PROCESS-NAME," + a + ",VPN" })
-    if (state.vpnApps.indexOf("electron") < 0) only.push("PROCESS-NAME,electron,VPN")
-    rules = only.concat(rules)
-  }
+  // First, before xray and directApps: nothing sends them DIRECT (vpn-guard would reject it anyway).
+  rules = state.vpnAddresses.map(function(c) {
+    return (c.indexOf(":") >= 0 ? "IP-CIDR6," : "IP-CIDR,") + c + ",VPN,no-resolve"
+  }).concat(rules)
   state.proxyDomains.forEach(function(d) { rules.push("DOMAIN-SUFFIX," + d + ",VPN") })
   state.directDomains.forEach(function(d) { rules.push("DOMAIN-SUFFIX," + d + ",DIRECT") })
   PRIVATE.forEach(function(c) { rules.push("IP-CIDR," + c + ",DIRECT,no-resolve") })
@@ -425,7 +458,7 @@ function files(state) {
       out.push({ path: "links/" + s.id + ".txt", data: JSON.stringify({ proxies: proxies }) + "\n" })
     }
   })
-  out.push({ path: "vpn-apps.txt", data: state.vpnApps.map(function(n) { return n + "\n" }).join("") })
+  out.push({ path: "vpn-addresses.txt", data: state.vpnAddresses.map(function(c) { return c + "\n" }).join("") })
   return out
 }
 
@@ -517,7 +550,7 @@ function view(state, st, apiUp, guarded) {
   var sub = state.subscriptions.filter(function(s) { return s.id === id })[0]
   var v = { kind: "on", name: sub ? sub.name : "", server: st.server, delay: st.delay }
   if (!apiUp) v.kind = "down"
-  else if (guarded === false && state.vpnApps.length) v.kind = "unguarded"
+  else if (guarded === false && state.vpnAddresses.length) v.kind = "unguarded"
   else if (!state.subscriptions.length) v.kind = "empty"
   else if (!st.tun) v.kind = "off"
   else if (!st.counts[st.group]) v.kind = "nosrv"
@@ -539,7 +572,7 @@ function glyph(v) { return isError(v) ? GLYPHS.error : (v.kind === "on" ? GLYPHS
 
 function tooltip(v, tr) {
   if (v.kind === "down") return tr("VPN service is not running")
-  if (v.kind === "unguarded") return tr("VPN: programs are not protected — systemctl status vpn-guard@$USER")
+  if (v.kind === "unguarded") return tr("VPN: addresses are not protected — systemctl status vpn-guard@$USER")
   if (v.kind === "empty") return tr("VPN: no subscriptions")
   if (v.kind === "off") return tr("VPN is off")
   if (v.kind === "nosrv") return tr("VPN: no servers in %1", v.name)

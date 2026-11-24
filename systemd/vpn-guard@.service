@@ -1,9 +1,9 @@
 # /etc/systemd/system/vpn-guard@.service
-# predmaxim.vpn: programs in ~/.config/mihomo/vpn-apps.txt of %i go out only
-# through mihomo's TUN, held by the kernel (eBPF tag + nftables). Up before the
-# network; the widget reloads it after a change of the list.
+# predmaxim.vpn: networks in ~/.config/mihomo/vpn-addresses.txt of %i are reached
+# only through mihomo's TUN, held by nftables. Up before the network; the widget
+# reloads it after a change of the list.
 [Unit]
-Description=VPN-only programs for %i (predmaxim.vpn)
+Description=VPN-only addresses for %i (predmaxim.vpn)
 Before=network-pre.target
 Wants=network-pre.target
 RequiresMountsFor=/home/%i

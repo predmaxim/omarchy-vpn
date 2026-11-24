@@ -1,114 +1,109 @@
 #!/bin/bash
 
-# predmaxim.vpn, programs only through VPN, the root part: vpn-guard@<user>.service runs it.
-# Installed in /usr/local/lib/omarchy-vpn/ next to vpn-guard.bpf.o: root loads nothing from
-# the user's folders. Design: omarchy-dotfiles docs/superpowers/specs/2026-11-10-vpn-only-apps-design.md
+# predmaxim.vpn, addresses only through VPN, the root part: vpn-guard@<user>.service runs it.
+# Installed in /usr/local/lib/omarchy-vpn/: root runs nothing from the user's folders.
+# Design: omarchy-dotfiles docs/superpowers/specs/2026-11-25-vpn-only-addresses-design.md
 #
-#   vpn-guard start <user>  nftables, eBPF programs, the user's list; start and reload alike
-#   vpn-guard stop          remove all of it
-#   vpn-guard names         stdin: the user's list; stdout: its valid names, one per line
+#   vpn-guard start <user>  the nftables table for the user's list; start and reload alike
+#   vpn-guard stop          remove it
+#   vpn-guard ruleset       stdin: the user's list; stdout: the table for it (nft -f)
 
 set -uo pipefail
-export LC_ALL=C # names are checked byte by byte, not by the locale's ranges
+export LC_ALL=C # the list is checked byte by byte, not by the locale's ranges
 
-PIN=/sys/fs/bpf/vpn-guard
-APPS=$PIN/maps/apps
+LIMIT=65536 # bytes of the list: the user's path may be /dev/zero; a FIFO is cut by TimeoutStartSec
 
 usage() {
-  echo "Usage: vpn-guard start <user> | stop | names" >&2
+  echo "Usage: vpn-guard start <user> | stop | ruleset" >&2
   exit 2
 }
 
-# The list is the user's file: pass valid names only, never print the rest.
-# mihomo and xray carry the VPN itself: marked, the whole machine would lose it.
-names() {
-  local line skipped=0
+# The list is the user's file: only an address with its /prefix reaches nft, never its syntax.
+# No wider than /8 and /16, as the widget takes them: a range that wide would cut the VPN's own
+# servers off. IPv4 is checked whole; for IPv6 only its characters, nft refuses a bad one.
+OCTET='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+V4="^($OCTET\\.){3}$OCTET/([89]|[12][0-9]|3[0-2])$"
+V6='^[0-9a-f:]{2,39}/(1[6-9]|[2-9][0-9]|1[01][0-9]|12[0-8])$'
+
+ruleset() {
+  local line v4=() v6=() skipped=0
   while IFS= read -r line || [[ -n $line ]]; do
     line=${line%$'\r'}
-    if [[ $line =~ ^[A-Za-z0-9._+-]{1,63}$ && $line != mihomo && $line != xray ]]; then
-      printf '%s\n' "$line"
-    else
+    if [[ $line =~ $V4 ]]; then
+      v4+=("$line")
+    elif [[ $line =~ $V6 ]]; then
+      v6+=("$line")
+    elif [[ -n $line ]]; then
       ((++skipped))
     fi
   done
   if ((skipped)); then
-    echo "vpn-guard: skipped $skipped invalid names" >&2
+    echo "vpn-guard: skipped $skipped invalid lines" >&2
+  fi
+
+  # One transaction: the table is replaced, never missing or empty in between.
+  # Private networks stay open whatever the list says: the router's DNS, LAN, Tailscale.
+  # Every socket is held, mihomo's own too: its DIRECT to a listed address is rejected.
+  cat <<'NFT'
+table inet vpn_guard
+delete table inet vpn_guard
+table inet vpn_guard {
+  set vpn4 { type ipv4_addr; flags interval; auto-merge; }
+  set vpn6 { type ipv6_addr; flags interval; auto-merge; }
+  chain guard {
+    oifname { "lo", "Meta" } return
+    ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16 } return
+    ip6 daddr { ::1, fc00::/7, fe80::/10 } return
+    ip daddr @vpn4 counter jump cut
+    ip6 daddr @vpn6 counter jump cut
+  }
+  # A refusal at once, not a hang. TCP: a reset — over IPv6 the ICMP error fails a connect
+  # only at the SYN's retry, a second later, and the app's fall back to IPv4 waits that long.
+  chain cut {
+    meta l4proto tcp reject with tcp reset
+    reject with icmpx admin-prohibited
+  }
+  chain out { type filter hook output priority 0; policy accept; jump guard; }
+  chain routed { type filter hook forward priority 0; policy accept; jump guard; }
+}
+NFT
+  if ((${#v4[@]})); then
+    printf 'add element inet vpn_guard vpn4 { %s }\n' "$(IFS=,; echo "${v4[*]}")"
+  fi
+  if ((${#v6[@]})); then
+    printf 'add element inet vpn_guard vpn6 { %s }\n' "$(IFS=,; echo "${v6[*]}")"
   fi
 }
 
-# A key of the apps map: the name padded with zeros to 64 bytes, in hex.
-key() {
-  { printf '%s' "$1"; head -c 64 /dev/zero; } | head -c 64 | od -An -v -tx1 -w64
-}
-
 start() {
-  local user=$1 name dump fail=0 k list
-  local -A want=()
+  local user=$1 list
   if [[ ! $user =~ ^[a-z_][a-z0-9_-]*$ ]]; then
     echo "vpn-guard: invalid user name" >&2
     exit 2
   fi
-
-  # One transaction: the table is replaced, never missing or empty in between.
-  nft -f - <<'NFT' || exit 1
-table inet vpn_guard
-delete table inet vpn_guard
-table inet vpn_guard {
-  chain out {
-    type filter hook output priority 0; policy accept;
-    meta mark & 0x10000000 == 0 accept
-    oifname { "lo", "Meta" } accept
-    ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } accept
-    counter reject with icmpx admin-prohibited
-  }
-}
-NFT
-
-  # Loaded already: leave the programs alone, the tags of running programs live in their map.
-  if [[ ! -e $PIN/mark_vpn_only ]]; then
-    if ! mkdir -p "$PIN/maps" ||
-      ! bpftool prog loadall "$(dirname "$(realpath "$0")")/vpn-guard.bpf.o" "$PIN" pinmaps "$PIN/maps" autoattach ||
-      ! bpftool cgroup attach /sys/fs/cgroup sock_create pinned "$PIN/mark_vpn_only" multi; then
-      stop
-      exit 1
-    fi
-  fi
-
   # The list is read as the user; setpriv, not runuser: no PAM session, which at boot would wait on user@ (after the network).
-  # At most 16 KB (256 names of 64 bytes): the user's path may be /dev/zero; a FIFO is cut by TimeoutStartSec.
-  # No file is an empty list; any other failure fails before the map is touched: never unguarded unseen.
-  # shellcheck disable=SC2016 # $1 is expanded by the user's bash, not here
+  # No file is an empty list; a list it cannot read or a longer one fails, and a reload keeps the table as it was.
+  # shellcheck disable=SC2016 # $1 and $2 are expanded by the user's bash, not here
   if ! list=$(setpriv --reuid="$user" --regid="$(id -g "$user")" --init-groups --inh-caps=-all -- \
-    bash -c '[[ ! -e $1 ]] || exec head -c 16384 -- "$1"' vpn-guard "/home/$user/.config/mihomo/vpn-apps.txt"); then
-    echo "vpn-guard: cannot read ~/.config/mihomo/vpn-apps.txt of $user" >&2
+    bash -c '[[ ! -e $1 ]] || exec head -c "$2" -- "$1"' vpn-guard "/home/$user/.config/mihomo/vpn-addresses.txt" $((LIMIT + 1))); then
+    echo "vpn-guard: cannot read ~/.config/mihomo/vpn-addresses.txt of $user" >&2
     exit 1
   fi
-
-  # Add first, then remove the rest: a name that stays listed is never unguarded.
-  while IFS= read -r name; do
-    read -ra k <<<"$(key "$name")"
-    want["${k[*]}"]=1
-    bpftool map update pinned "$APPS" key hex "${k[@]}" value hex 01 || fail=1
-  done < <(printf '%s' "$list" | names)
-
-  dump=$(bpftool -j map dump pinned "$APPS" | jq -r '.[].key | map(ltrimstr("0x")) | join(" ")') || exit 1
-  while read -ra k; do
-    if ((${#k[@]})) && [[ -z ${want["${k[*]}"]-} ]]; then
-      bpftool map delete pinned "$APPS" key hex "${k[@]}" || fail=1
-    fi
-  done <<<"$dump"
-  return $fail
+  if ((${#list} > LIMIT)); then
+    echo "vpn-guard: ~/.config/mihomo/vpn-addresses.txt of $user is over $LIMIT bytes" >&2
+    exit 1
+  fi
+  printf '%s\n' "$list" | ruleset | nft -f -
 }
 
 stop() {
-  bpftool cgroup detach /sys/fs/cgroup sock_create pinned "$PIN/mark_vpn_only" 2>/dev/null
   nft delete table inet vpn_guard 2>/dev/null
-  rm -rf "$PIN" # the LSM programs' links go with their pins
+  return 0
 }
 
 case ${1-} in
 start) start "${2-}" ;;
 stop) stop ;;
-names) names ;;
+ruleset) ruleset ;;
 *) usage ;;
 esac

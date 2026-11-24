@@ -6,7 +6,7 @@
 var TABLES = {
   ru: {
     "VPN service is not running": "Сервис VPN не запущен",
-    "VPN: programs are not protected — systemctl status vpn-guard@$USER": "VPN: программы не защищены — systemctl status vpn-guard@$USER",
+    "VPN: addresses are not protected — systemctl status vpn-guard@$USER": "VPN: адреса не защищены — systemctl status vpn-guard@$USER",
     "VPN: no subscriptions": "VPN: нет подписок",
     "VPN is off": "VPN выключен",
     "VPN: no servers in %1": "VPN: в %1 нет серверов",
@@ -32,11 +32,12 @@ var TABLES = {
     "Russia": "Россия", "Don't use": "Не использовать", "Block ads": "Блокировать рекламу",
     "Switch to a working subscription": "Переключаться на рабочую подписку",
     "ALWAYS THROUGH VPN": "ВСЕГДА ЧЕРЕЗ VPN", "ALWAYS DIRECT": "ВСЕГДА НАПРЯМУЮ",
-    "ONLY THROUGH VPN — PROGRAMS": "ТОЛЬКО ЧЕРЕЗ VPN — ПРОГРАММЫ", "Program…": "Программа…",
-    "The file name of the program or of its launcher, not of a link to it (cursor, obsidian). Restart a running one.":
-      "Имя файла программы или её скрипта запуска, не ссылки на него (cursor, obsidian). Запущенную — перезапустить.",
-    "Not a program name: %1": "Не имя программы: %1", "%1 runs the VPN itself": "%1 — часть самого VPN",
-    "Could not protect the VPN-only programs": "Не удалось защитить программы «только через VPN»",
+    "ONLY THROUGH VPN — ADDRESSES": "ТОЛЬКО ЧЕРЕЗ VPN — АДРЕСА", "IP or network…": "IP или сеть…",
+    "An IP or a network (160.79.104.0/23), not a domain: never reached past the VPN, cut off while it is down.":
+      "IP или сеть (160.79.104.0/23), не домен: только через VPN, пока он лежит — недоступны.",
+    "Not an IP or a network: %1": "Не IP и не сеть: %1",
+    "A private network never goes through the VPN: %1": "Частная сеть через VPN не идёт: %1",
+    "Could not protect the VPN-only addresses": "Не удалось защитить адреса «только через VPN»",
     "Check: systemctl status vpn-guard@%1": "Проверьте: systemctl status vpn-guard@%1",
     "ADD SUBSCRIPTION": "ДОБАВИТЬ ПОДПИСКУ",
     "VPN did not start": "VPN не запустился", "VPN settings file is damaged": "Файл настроек VPN повреждён",

@@ -4,7 +4,7 @@ const assert = require("assert")
 const src = fs.readFileSync(__dirname + "/Model.js", "utf8").replace(".pragma library", "")
 const M = new Function(src + `; return { defaults, load, randomSecret, clone, patch, idFor, classify, host,
   decodeTitle, splitResponse, urlSubscription, linksSubscription, addSubscription, removeSubscription, useSubscription,
-  setEnabled, normalizeDomain, addDomain, removeDomain, normalizeApp, addApp, removeApp, buildConfig, files, writerEnv, WRITE_SCRIPT, status, view, isError,
+  setEnabled, normalizeDomain, addDomain, removeDomain, normalizeAddress, addAddress, removeAddress, buildConfig, files, writerEnv, WRITE_SCRIPT, status, view, isError,
   isConnecting, glyph, tooltip, retryDelay, TEST_URL, parseState }`)()
 
 // state.json: broken or partial files fall back to defaults field by field
@@ -145,7 +145,7 @@ assert.strictEqual(cfg.tun.enable, false)
 
 // files and the writer (runs the real sh script in a temp dir)
 const fl = M.files(cs)
-assert.deepStrictEqual(fl.map(f => f.path), ["state.json", "config.yaml", "links/s1.txt", "vpn-apps.txt"])
+assert.deepStrictEqual(fl.map(f => f.path), ["state.json", "config.yaml", "links/s1.txt", "vpn-addresses.txt"])
 assert.deepStrictEqual(JSON.parse(fl[0].data), cs)
 assert.strictEqual(fl[2].data, "hy2://p@h:443#Hy2-Main\n")
 const os = require("os"), path = require("path"), cp = require("child_process")
@@ -167,10 +167,15 @@ assert.ok(!fs.existsSync(dir + "/config.yaml.tmp"))
 assert.strictEqual(fs.statSync(dir + "/state.json").mode & 0o777, 0o600)
 fs.rmSync(dir, { recursive: true })
 
-// vpn-guard takes only valid names from the user's file; never prints the rest
-const names = cp.execFileSync("bash", [__dirname + "/guard/vpn-guard", "names"],
-  { input: "curl\n/usr/bin/x\n\nmihomo\nxray\nmy app\nobsidian\r\n" + "y".repeat(64) + "\n", stdio: ["pipe", "pipe", "ignore"] }).toString()
-assert.strictEqual(names, "curl\nobsidian\n")
+// vpn-guard takes every address the widget writes, skips none (guard/test.sh: the rest of it)
+let vg = M.defaults("k")
+for (const a of ["160.79.104.0/23", "153.61.224.10", "2607:6bc0::/48", "1:2:3:4:5:6:7:8"])
+  vg = M.addAddress(vg, a).state
+const vgOut = cp.spawnSync("bash", [__dirname + "/guard/vpn-guard", "ruleset"],
+  { input: M.files(vg).find(f => f.path === "vpn-addresses.txt").data })
+assert.strictEqual(vgOut.stderr.toString(), "")
+assert.ok(vgOut.stdout.toString().includes("add element inet vpn_guard vpn4 { 160.79.104.0/23,153.61.224.10/32 }"))
+assert.ok(vgOut.stdout.toString().includes("add element inet vpn_guard vpn6 { 2607:6bc0::/48,1:2:3:4:5:6:7:8/128 }"))
 
 // status from GET /configs and GET /proxies
 // Servers of a provider are not in /proxies: their test history comes from /providers/proxies.
@@ -209,14 +214,14 @@ assert.strictEqual(M.glyph({ kind: "on" }), "\u{F059F}")
 for (const kind of ["off", "empty"]) assert.strictEqual(M.glyph({ kind }), "\u{F0A8E}")
 for (const kind of ["dead", "down", "nosrv"]) assert.strictEqual(M.glyph({ kind }), "\u{F1790}")
 const trEn = (t, ...a) => a.reduce((s, x, i) => s.split("%" + (i + 1)).join(x), t)
-// unguarded: only with programs listed, right after down
-assert.strictEqual(M.view(M.patch(cs, { vpnApps: ["curl"] }), stt, true, false).kind, "unguarded")
-assert.strictEqual(M.view(M.patch(cs, { vpnApps: ["curl"] }), stt, false, false).kind, "down")
+// unguarded: only with addresses listed, right after down
+assert.strictEqual(M.view(M.patch(cs, { vpnAddresses: ["160.79.104.0/23"] }), stt, true, false).kind, "unguarded")
+assert.strictEqual(M.view(M.patch(cs, { vpnAddresses: ["160.79.104.0/23"] }), stt, false, false).kind, "down")
 assert.strictEqual(M.view(cs, stt, true, false).kind, "on")
 // the view without the guard (Status.linkView: retries, re-checks) never says unguarded
-assert.notStrictEqual(M.view(M.patch(cs, { vpnApps: ["curl"] }), stt, true).kind, "unguarded")
+assert.notStrictEqual(M.view(M.patch(cs, { vpnAddresses: ["160.79.104.0/23"] }), stt, true).kind, "unguarded")
 assert.ok(M.isError({ kind: "unguarded" }))
-assert.strictEqual(M.tooltip({ kind: "unguarded" }, trEn), "VPN: programs are not protected — systemctl status vpn-guard@$USER")
+assert.strictEqual(M.tooltip({ kind: "unguarded" }, trEn), "VPN: addresses are not protected — systemctl status vpn-guard@$USER")
 assert.strictEqual(M.tooltip({ kind: "on", name: "A", server: "B", delay: -1 }, trEn), "VPN: A · B · … ms")
 // a one-link subscription is named like its server: say it once
 assert.strictEqual(M.tooltip({ kind: "on", name: "A", server: "A", delay: 45 }, trEn), "VPN: A · 45 ms")
@@ -319,29 +324,37 @@ xs = M.addSubscription(xs, xsub).state
 xs = M.addSubscription(xs, Object.assign({}, xsub, { id: "sx2" })).state
 assert.deepStrictEqual(xs.subscriptions.map(s => s.port), [undefined, X.XRAY_PORT, X.XRAY_PORT + X.XRAY_BLOCK])
 assert.strictEqual(xsub.port, undefined)
-// VPN-only programs: a name, a launcher's name, never mihomo/xray
-assert.strictEqual(M.normalizeApp("  /usr/bin/obsidian \n"), "obsidian")
-assert.strictEqual(M.normalizeApp("Telegram"), "Telegram")
-assert.strictEqual(M.normalizeApp("my app"), "")
-assert.strictEqual(M.normalizeApp("x".repeat(64)), "")
-assert.strictEqual(M.addApp(M.defaults("k"), "mihomo").error, "reserved")
-assert.strictEqual(M.addApp(M.defaults("k"), "/usr/bin/xray").error, "reserved")
-assert.strictEqual(M.addApp(M.defaults("k"), "a b").error, "invalid")
-const va = M.addApp(M.defaults("k"), "qbittorrent").state
-assert.deepStrictEqual(va.vpnApps, ["qbittorrent"])
-assert.ok(va.directApps.indexOf("qbittorrent") < 0)
-assert.strictEqual(M.addApp(va, "qbittorrent").error, "exists")
-assert.deepStrictEqual(M.removeApp(va, "qbittorrent").vpnApps, [])
-// rules: the list first (before xray and directApps), then electron; electron once
-const vx = M.addApp(xs, "cursor").state
-const vr = M.buildConfig(vx).rules
-assert.deepStrictEqual(vr.slice(0, 3), ["PROCESS-NAME,cursor,VPN", "PROCESS-NAME,electron,VPN", "PROCESS-NAME,xray,DIRECT"])
-assert.strictEqual(M.buildConfig(M.addApp(vx, "electron").state).rules.filter(r => /,electron,/.test(r)).length, 1)
-assert.ok(!M.buildConfig(xs).rules.some(r => /,electron,/.test(r)))
+// VPN-only addresses: an IPv4/IPv6 address or network, never wider than /8, /16
+assert.strictEqual(M.normalizeAddress(" 160.79.104.10 "), "160.79.104.10/32")
+assert.strictEqual(M.normalizeAddress("160.79.104.0/23"), "160.79.104.0/23")
+assert.strictEqual(M.normalizeAddress("2607:6BC0::/48"), "2607:6bc0::/48")
+assert.strictEqual(M.normalizeAddress("2607:6bc0::10"), "2607:6bc0::10/128")
+assert.strictEqual(M.normalizeAddress("1:2:3:4:5:6:7:8"), "1:2:3:4:5:6:7:8/128")
+for (const bad of ["", "api.anthropic.com", "256.1.1.1", "1.2.3", "01.2.3.4", "1.2.3.4/33", "0.0.0.0/0", "1.0.0.0/7",
+  "::/0", "2607::/15", "1::2::3", "1:2:3:4:5:6:7:8:9", "1:2:3:4:5:6:7::8:9", ":1::", "12345::", "1.2.3.4/24; flush ruleset", "1.2.3.4 /24"])
+  assert.strictEqual(M.normalizeAddress(bad), "", bad)
+assert.strictEqual(M.addAddress(M.defaults("k"), "x").error, "invalid")
+// private networks: the guard lets them out anyway, so the widget refuses them
+for (const p of ["10.0.0.0/8", "10.1.2.3", "172.20.0.0/16", "192.168.0.1", "100.64.0.0/10",
+  "127.0.0.1", "169.254.1.1", "192.0.0.0/8", "fd00::1", "fc00::/16", "fe80::1", "::1", "0:1::/32"])
+  assert.strictEqual(M.addAddress(M.defaults("k"), p).error, "private", p)
+for (const p of ["8.8.8.8", "100.128.0.0/16", "172.32.0.0/16", "11.0.0.0/8", "2607:6bc0::/48", "fe00::/16", "fec0::/16"])
+  assert.strictEqual(M.addAddress(M.defaults("k"), p).error, "", p)
+const va = M.addAddress(M.defaults("k"), "160.79.104.0/23").state
+assert.deepStrictEqual(va.vpnAddresses, ["160.79.104.0/23"])
+assert.strictEqual(M.addAddress(va, " 160.79.104.0/23").error, "exists")
+assert.deepStrictEqual(M.removeAddress(va, "160.79.104.0/23").vpnAddresses, [])
+// rules: the list first, before xray and directApps; IPv6 as IP-CIDR6; no DNS lookup
+const vx = M.addAddress(M.addAddress(xs, "160.79.104.0/23").state, "2607:6bc0::/48").state
+assert.deepStrictEqual(M.buildConfig(vx).rules.slice(0, 3),
+  ["IP-CIDR,160.79.104.0/23,VPN,no-resolve", "IP-CIDR6,2607:6bc0::/48,VPN,no-resolve", "PROCESS-NAME,xray,DIRECT"])
+assert.strictEqual(M.buildConfig(xs).rules[0], "PROCESS-NAME,xray,DIRECT")
 assert.strictEqual(M.buildConfig(xs).tun.device, "Meta")
-// the guard's list file: a name per line; empty when the list is
-assert.strictEqual(M.files(vx).find(f => f.path === "vpn-apps.txt").data, "cursor\n")
-assert.strictEqual(M.files(xs).find(f => f.path === "vpn-apps.txt").data, "")
+// the guard's list file: a network per line; empty when the list is
+assert.strictEqual(M.files(vx).find(f => f.path === "vpn-addresses.txt").data, "160.79.104.0/23\n2607:6bc0::/48\n")
+assert.strictEqual(M.files(xs).find(f => f.path === "vpn-addresses.txt").data, "")
+// a state.json from before keeps nothing of the programs list
+assert.ok(!("vpnApps" in M.load('{"vpnApps":["curl"]}')))
 // Xray: every location behind a SOCKS port of its own, the API secret the password; tags by location
 const xc = X.xrayConfig(xs.subscriptions[1], "sec")
 assert.deepStrictEqual(xc.inbounds.map(i => [i.tag, i.listen, i.port]), [0, 1, 2, 3].map(i => [i + "-in", "127.0.0.1", X.XRAY_PORT + i]))
@@ -358,7 +371,7 @@ assert.ok(!("dns" in xc))
 assert.strictEqual(xs.subscriptions[1].locations[0].outbounds[0].tag, "de-1")
 // mihomo: a SOCKS server per location, named after it; Xray's own traffic goes direct
 const xfiles = M.files(xs)
-assert.deepStrictEqual(xfiles.map(f => f.path), ["state.json", "config.yaml", "links/sa.txt", "xray/" + xsub.id + ".json", "links/" + xsub.id + ".txt", "xray/sx2.json", "links/sx2.txt", "vpn-apps.txt"])
+assert.deepStrictEqual(xfiles.map(f => f.path), ["state.json", "config.yaml", "links/sa.txt", "xray/" + xsub.id + ".json", "links/" + xsub.id + ".txt", "xray/sx2.json", "links/sx2.txt", "vpn-addresses.txt"])
 assert.deepStrictEqual(JSON.parse(xfiles[3].data), xc)
 const xproxies = st => JSON.parse(M.files(st).find(f => f.path === "links/" + xsub.id + ".txt").data).proxies
 assert.deepStrictEqual(xproxies(xs)[1], { name: "🇳🇱 Amsterdam", type: "socks5", server: "127.0.0.1", port: X.XRAY_PORT + 1,
