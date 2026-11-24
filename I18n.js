@@ -32,12 +32,12 @@ var TABLES = {
     "Russia": "Россия", "Don't use": "Не использовать", "Block ads": "Блокировать рекламу",
     "Switch to a working subscription": "Переключаться на рабочую подписку",
     "ALWAYS THROUGH VPN": "ВСЕГДА ЧЕРЕЗ VPN", "ALWAYS DIRECT": "ВСЕГДА НАПРЯМУЮ",
-    "ONLY THROUGH VPN — ADDRESSES": "ТОЛЬКО ЧЕРЕЗ VPN — АДРЕСА", "IP or network…": "IP или сеть…",
-    "An IP or a network (160.79.104.0/23), not a domain: never reached past the VPN, cut off while it is down.":
-      "IP или сеть (160.79.104.0/23), не домен: только через VPN, пока он лежит — недоступны.",
-    "Not an IP or a network: %1": "Не IP и не сеть: %1",
+    "Domain, IP or network…": "Домен, IP или сеть…", "only VPN": "только VPN",
+    "An IP or a network (160.79.104.0/23) is never reached past the VPN: while it is down, it is cut off.":
+      "IP и сети (160.79.104.0/23) — только через VPN: пока он лежит, они недоступны.",
+    "Not a domain, an IP or a network: %1": "Не домен, не IP и не сеть: %1",
     "A private network never goes through the VPN: %1": "Частная сеть через VPN не идёт: %1",
-    "An IP or a network goes to ONLY THROUGH VPN — ADDRESSES": "IP и сети — в список «ТОЛЬКО ЧЕРЕЗ VPN — АДРЕСА»",
+    "An IP or a network goes to ALWAYS THROUGH VPN": "IP и сети — в «ВСЕГДА ЧЕРЕЗ VPN»",
     "Could not protect the VPN-only addresses": "Не удалось защитить адреса «только через VPN»",
     "Check: systemctl status vpn-guard@%1": "Проверьте: systemctl status vpn-guard@%1",
     "ADD SUBSCRIPTION": "ДОБАВИТЬ ПОДПИСКУ",

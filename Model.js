@@ -377,6 +377,21 @@ function removeAddress(state, cidr) {
   return next
 }
 
+// The rules page has two sections: "always through VPN" shows the domains and the VPN-only
+// addresses, "always direct" its domains. Each entry keeps the list it lives in.
+function sectionEntries(state, section) {
+  var lists = section === "proxyDomains" ? ["proxyDomains", "vpnAddresses"] : [section]
+  return [].concat.apply([], lists.map(function(list) {
+    return (state[list] || []).map(function(value) { return { list: list, value: value } })
+  }))
+}
+
+// A section's field: "always through VPN" takes a domain, an IP or a network.
+function addRule(state, section, text) {
+  if (section === "proxyDomains" && !normalizeDomain(text) && normalizeAddress(text)) return addAddress(state, text)
+  return addDomain(state, section, text)
+}
+
 function buildConfig(state) {
   var subs = state.subscriptions
   var providers = {}

@@ -44,9 +44,9 @@ Panel {
   // Rules page rows for the keyboard, in screen order; cursor indexes them there.
   readonly property var ruleRows: {
     var rows = [{ kind: "country" }, { kind: "ads" }, { kind: "auto" }]
-    ;["proxyDomains", "directDomains", "vpnAddresses"].forEach(function(list) {
+    ;["proxyDomains", "directDomains"].forEach(function(list) {
       rows.push({ kind: "field", list: list })
-      ;(vpn.saved[list] || []).forEach(function(d) { rows.push({ kind: "domain", list: list, value: d }) })
+      Model.sectionEntries(vpn.saved, list).forEach(function(e) { rows.push({ kind: "domain", list: e.list, value: e.value }) })
     })
     return rows
   }
@@ -393,15 +393,15 @@ Panel {
     qrDelay.start()
   }
 
-  // A rules list's field: a domain, or an IP or a network for vpnAddresses.
+  // A rules section's field: a domain; "always through VPN" also an IP or a network (vpnAddresses).
   function addDomain(list, text) {
-    var add = list === "vpnAddresses" ? function(s) { return Model.addAddress(s, text) } : function(s) { return Model.addDomain(s, list, text) }
+    var add = function(s) { return Model.addRule(s, list, text) }
     var r = add(vpn.saved)
     if (r.error === "invalid") {
-      root.notify(list === "vpnAddresses" ? root.tr("Not an IP or a network: %1", text.trim()) : root.tr("Not a domain: %1", text.trim()), "")
+      root.notify(list === "proxyDomains" ? root.tr("Not a domain, an IP or a network: %1", text.trim()) : root.tr("Not a domain: %1", text.trim()), "")
       return false
     }
-    if (r.error === "address") { root.notify(root.tr("Not a domain: %1", text.trim()), root.tr("An IP or a network goes to ONLY THROUGH VPN — ADDRESSES")); return false }
+    if (r.error === "address") { root.notify(root.tr("Not a domain: %1", text.trim()), root.tr("An IP or a network goes to ALWAYS THROUGH VPN")); return false }
     if (r.error === "private") { root.notify(root.tr("A private network never goes through the VPN: %1", Model.normalizeAddress(text)), ""); return false }
     if (!r.error) root.commit(function(s) { return add(s).state }, true, null)
     return true
@@ -950,12 +950,11 @@ Panel {
 
             PanelSeparator { foreground: root.fg }
 
-            // Three rule lists: caption, a borderless field (Enter adds), entries with ✕.
+            // Two rule sections: caption, a borderless field (Enter adds), entries with ✕.
             Repeater {
-              model: [{ list: "proxyDomains", title: root.tr("ALWAYS THROUGH VPN"), placeholder: root.tr("Domain…") },
-                      { list: "directDomains", title: root.tr("ALWAYS DIRECT"), placeholder: root.tr("Domain…") },
-                      { list: "vpnAddresses", title: root.tr("ONLY THROUGH VPN — ADDRESSES"), placeholder: root.tr("IP or network…"),
-                        hint: root.tr("An IP or a network (160.79.104.0/23), not a domain: never reached past the VPN, cut off while it is down.") }]
+              model: [{ list: "proxyDomains", title: root.tr("ALWAYS THROUGH VPN"), placeholder: root.tr("Domain, IP or network…"),
+                        hint: root.tr("An IP or a network (160.79.104.0/23) is never reached past the VPN: while it is down, it is cut off.") },
+                      { list: "directDomains", title: root.tr("ALWAYS DIRECT"), placeholder: root.tr("Domain…") }]
               delegate: Column {
                 id: domains
                 required property var modelData
@@ -1015,14 +1014,14 @@ Panel {
                   height: Math.min(contentHeight, Style.space(140))
                   clip: true
                   boundsBehavior: Flickable.StopAtBounds
-                  model: vpn.saved[domains.modelData.list]
+                  model: Model.sectionEntries(vpn.saved, domains.modelData.list)
                   QQC.ScrollBar.vertical: QQC.ScrollBar { policy: domainList.contentHeight > domainList.height ? QQC.ScrollBar.AlwaysOn : QQC.ScrollBar.AlwaysOff }
                   delegate: CursorSurface {
                     id: domainRow
-                    required property string modelData
+                    required property var modelData
                     required property int index
                     foreground: root.fg
-                    hasCursor: root.ruleAt("domain", domains.modelData.list, modelData)
+                    hasCursor: root.ruleAt("domain", modelData.list, modelData.value)
                     onHasCursorChanged: if (hasCursor) { domainList.positionViewAtIndex(index, ListView.Contain); root.showRuleRow(this) }
                     width: domainList.width
                     height: Math.max(Style.space(32), domainText.implicitHeight + Style.spacing.xs * 2)
@@ -1030,12 +1029,24 @@ Panel {
                       id: domainText
                       anchors.left: parent.left
                       anchors.verticalCenter: parent.verticalCenter
-                      text: domainRow.modelData
+                      text: domainRow.modelData.value
                       color: root.fg
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.body
                     }
+                    // An address is held by the guard too: cut off while the VPN is down.
+                    Text {
+                      visible: domainRow.modelData.list === "vpnAddresses"
+                      anchors.right: removeButton.left
+                      anchors.rightMargin: Style.space(12)
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: root.tr("only VPN")
+                      color: root.muted
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
                     Button {
+                      id: removeButton
                       anchors.right: parent.right
                       anchors.rightMargin: Style.space(12)
                       anchors.verticalCenter: parent.verticalCenter
@@ -1044,7 +1055,7 @@ Panel {
                       tooltipText: root.tr("Delete")
                       foreground: root.fg
                       fontFamily: root.fontFamily
-                      onClicked: root.removeDomain(domains.modelData.list, domainRow.modelData)
+                      onClicked: root.removeDomain(domainRow.modelData.list, domainRow.modelData.value)
                     }
                   }
                 }

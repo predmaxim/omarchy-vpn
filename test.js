@@ -4,7 +4,7 @@ const assert = require("assert")
 const src = fs.readFileSync(__dirname + "/Model.js", "utf8").replace(".pragma library", "")
 const M = new Function(src + `; return { defaults, load, randomSecret, clone, patch, idFor, classify, host,
   decodeTitle, splitResponse, urlSubscription, linksSubscription, addSubscription, removeSubscription, useSubscription,
-  setEnabled, normalizeDomain, addDomain, removeDomain, normalizeAddress, addAddress, removeAddress, buildConfig, files, writerEnv, WRITE_SCRIPT, status, view, isError,
+  setEnabled, normalizeDomain, addDomain, removeDomain, normalizeAddress, addAddress, removeAddress, sectionEntries, addRule, buildConfig, files, writerEnv, WRITE_SCRIPT, status, view, isError,
   isConnecting, glyph, tooltip, retryDelay, TEST_URL, parseState }`)()
 
 // state.json: broken or partial files fall back to defaults field by field
@@ -93,6 +93,17 @@ assert.strictEqual(M.normalizeDomain("123.example.com"), "123.example.com")
 for (const a of ["160.79.104.0/23", "2607:6bc0::/48", "8.8.8.8"])
   assert.strictEqual(M.addDomain(M.defaults("k"), "proxyDomains", a).error, "address", a)
 assert.strictEqual(M.addDomain(M.defaults("k"), "proxyDomains", "a b").error, "invalid")
+// one "always through VPN" section: a domain to proxyDomains, an IP or a network to vpnAddresses
+let ar = M.addRule(M.defaults("k"), "proxyDomains", "example.org").state
+ar = M.addRule(ar, "proxyDomains", "160.79.104.0/23").state
+assert.deepStrictEqual([ar.proxyDomains, ar.vpnAddresses], [["example.org"], ["160.79.104.0/23"]])
+assert.strictEqual(M.addRule(ar, "proxyDomains", "192.168.0.1").error, "private")
+assert.strictEqual(M.addRule(ar, "proxyDomains", "a b").error, "invalid")
+assert.strictEqual(M.addRule(ar, "directDomains", "8.8.8.8").error, "address")
+assert.deepStrictEqual(M.addRule(ar, "directDomains", "z.ai").state.directDomains, ["z.ai"])
+assert.deepStrictEqual(M.sectionEntries(ar, "proxyDomains"),
+  [{ list: "proxyDomains", value: "example.org" }, { list: "vpnAddresses", value: "160.79.104.0/23" }])
+assert.deepStrictEqual(M.sectionEntries(M.patch(ar, { directDomains: ["z.ai"] }), "directDomains"), [{ list: "directDomains", value: "z.ai" }])
 assert.strictEqual(M.normalizeDomain("кто.рф"), "")
 assert.strictEqual(M.normalizeDomain("a b.com"), "")
 let d = M.addDomain(M.defaults("k"), "proxyDomains", "Kinopoisk.ru")
